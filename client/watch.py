@@ -51,7 +51,8 @@ def imageProcessing():
             coord = cv2.findNonZero(thresh).reshape(-1,2).T
             xMin,xMax=min(coord[1]),max(coord[1])
             yMin,yMax=min(coord[0]),max(coord[0]) 
-            keypoints = detector.detect(cv2.bitwise_not(img[xMin-5:xMax+5,yMin-5:yMax+5]))
+            # keypoints = detector.detect(cv2.bitwise_not(img[max(0, xMin-5):min(len(img), xMax+5),max(0, yMin-5):min(len(img[0]), yMax+5)])) 
+            keypoints = detector.detect(cv2.bitwise_not(img[max(0, xMin-5):min(len(img), xMax+5),max(0, yMin-5):min(len(img[0]), yMax+5)]))
             N = np.array(keypoints).shape[0]
             msg = np.zeros(N*3+4)
             for i in range(N): 

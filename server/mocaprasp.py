@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import click 
 
 from mcr.capture.CEC import CEC 
@@ -6,12 +7,12 @@ from mcr.capture.SCR import SCR
 
 @click.group()
 def mocaprasp():
-    '''
-    MoCap Rasp - Optical Tracking Arena\n\n
-    Server script for the MoCap system at the Erobotica Lab, UFCG.\n
-    Please use it together with the corresponding client script.
-    '''
-    pass
+  '''
+  MoCap Rasp - Optical Tracking Arena\n\n
+  Server script for the MoCap system at the Erobotica Lab, UFCG.\n
+  Please use it together with the corresponding client script.
+  '''
+  pass
 
 @click.command(name='cec')
 @click.option('--cameraids', '-c', default = '0,1,2,3', help = 'List of active camera IDs (Default: 0,1,2,3)')
@@ -77,3 +78,6 @@ def scr(cameraids, markers, trigger, record, fps, verbose, save):
 mocaprasp.add_command(cec)
 mocaprasp.add_command(scr)
 mocaprasp.add_command(gpe)
+
+if __name__ == '__main__':
+    mocaprasp()
