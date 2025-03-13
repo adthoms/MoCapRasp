@@ -52,7 +52,7 @@ print('[INFO] connecting to server')
 # now = time.time()
 # while now < start: now = time.time()
 # print('[INFO] delay in sec: ',now-start)
-max_frames=20
+max_frames=500
 
 # running command
 cameraProcess = sp.Popen(videoCmd, stdout=sp.PIPE) # start the camera
@@ -61,22 +61,22 @@ print("[INFO] RECORDING ...")
 
 start = time.time()
 while True:
-	# capture frame
-	frame = np.frombuffer(cameraProcess.stdout.read(bytesPerFrame), dtype=np.uint8)
-	if frame.size != bytesPerFrame:
-		print("[ERROR] Camera stream closed unexpectedly")
-		break
-	frame.shape = (h,w) 
-	# capture timestamp
-	ts = cameraProcess.stdout.readline()[-11:-1].decode().strip()
-	# write image
-	cv2.imwrite('/dev/shm/'+ts.zfill(10)+'.bmp',frame)
-	# free memory
-	cameraProcess.stdout.flush()
-	del frame
-	# count frame
-	N_frames += 1
-	if N_frames == max_frames: break
+  # capture frame
+  frame = np.frombuffer(cameraProcess.stdout.read(bytesPerFrame), dtype=np.uint8)
+  if frame.size != bytesPerFrame:
+    print("[ERROR] Camera stream closed unexpectedly")
+    break
+  frame.shape = (h,w) 
+  # capture timestamp
+  ts = cameraProcess.stdout.readline()[-11:-1].decode().strip()
+  # write image
+  cv2.imwrite('/dev/shm/'+ts.zfill(10)+'.bmp',frame)
+  # free memory
+  cameraProcess.stdout.flush()
+  del frame
+  # count frame
+  N_frames += 1
+  if N_frames == max_frames: break
 
 # closing buffer
 end = time.time()-start

@@ -48,26 +48,26 @@ class CaptureProcess(object):
         print('[INFO] Server running, waiting for clients')
 
         addedCams,ports=[],[]
-        while len(addedCams)!=self.cameras:
-            # Collect adresses
-            message,address = self.server_socket.recvfrom(self.bufferSize)
+        while len(addedCams) != self.cameras:
+            # Collect addresses
+            message, address = self.server_socket.recvfrom(self.bufferSize)
 
             # Check if it is in IP list
             if address[0] not in self.ipList:
-                print('[ERROR] IP '+address[0]+' not in the list')
-                exit()
+              print('[ERROR] IP ' + address[0] + ' not in the list')
+              exit()
+
+            # Check if the address is already in ports
+            if any(address[0] == port[0] for port in ports):
+              continue
 
             # Get image size
             idx = self.ipList.index(address[0])
-            self.imageSize[idx] = np.array(message.decode('utf-8').split(',')).astype(np.int)
-            print('[INFO] Camera '+str(idx)+' connected at '+str(address[0]))
+            message = np.frombuffer(message, dtype=np.float64)
+            print("Message: ", message)
 
-            # Redo intrinsics
-            ret,newCamMatrix=self.intrinsics(self.cameraMat[idx],self.imageSize[idx][0],self.imageSize[idx][1],self.imageSize[idx][2])
-            if ret: 
-                self.cameraMat[idx]=np.copy(newCamMatrix)
-            else: 
-                exit()
+            self.imageSize[idx] = np.frombuffer(message, dtype=np.float64)
+            print('[INFO] Camera ' + str(idx) + ' connected at ' + str(address[0]))
 
             addedCams.append(idx)
             ports.append(address)
@@ -76,7 +76,10 @@ class CaptureProcess(object):
 
         # Send trigger
         self.triggerTime += time.time()
+        print(self.cameras)
         for i in range(self.cameras): 
+            print("ports[", i, "]: ")
+            print(ports[i])
             self.server_socket.sendto((str(self.triggerTime)+' '+str(self.record)).encode(),tuple(ports[i]))
         print('[INFO] Trigger sent')
 
@@ -84,6 +87,7 @@ class CaptureProcess(object):
     def intrinsics(self,origMatrix,w,h,mode):
         camIntris = np.copy(origMatrix) # Copy to avoid register error
 
+        print(w, h, w/h, mode)
         # Check if image is at the available proportion
         if w/h==4/3 or w/h==16/9:
             if mode==4: # Only resize

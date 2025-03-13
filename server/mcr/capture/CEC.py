@@ -20,7 +20,7 @@ class CEC(CaptureProcess):
         print('[INFO] waiting capture')
        
         # Internal variables
-        capture = np.ones(self.cameras,dtype=np.bool)
+        capture = np.ones(self.cameras,dtype=bool)
         counter,lastTime = np.zeros(self.cameras,dtype=np.uint16),np.zeros(self.cameras,dtype=np.uint32)
         missed,invalid = np.zeros(self.cameras,dtype=np.uint32),np.zeros(self.cameras,dtype=np.uint32)
         swap,certainty = np.zeros(self.cameras,dtype=np.uint16),np.zeros(self.cameras,dtype=np.bool8)

@@ -51,8 +51,8 @@ def imageProcessing():
             coord = cv2.findNonZero(thresh).reshape(-1,2).T
             xMin,xMax=min(coord[1]),max(coord[1])
             yMin,yMax=min(coord[0]),max(coord[0]) 
-            # keypoints = detector.detect(cv2.bitwise_not(img[max(0, xMin-5):min(len(img), xMax+5),max(0, yMin-5):min(len(img[0]), yMax+5)])) 
-            keypoints = detector.detect(cv2.bitwise_not(img[max(0, xMin-5):min(len(img), xMax+5),max(0, yMin-5):min(len(img[0]), yMax+5)]))
+            # keypoints = detector.detect(cv2.bitwise_not(img[xMin-5:xMax+5),yMin-5:yMax+5])) 
+            keypoints = detector.detect(cv2.bitwise_not(img[max(0, xMin-5):min(len(img[0]), xMax+5),max(0, yMin-5):min(len(img), yMax+5)]))
             N = np.array(keypoints).shape[0]
             msg = np.zeros(N*3+4)
             for i in range(N): 
@@ -85,12 +85,12 @@ class OnMyWatch:
         self.observer.schedule(event_handler, self.watchDirectory, recursive = True)
         self.observer.start()
         try:
-            while True:
-                time.sleep(300)
-                self.observer.stop()
-                UDPSocket.sendto(np.array([0.0]).tobytes(),(hostnamePC, 8888))
-                print("Observer Stopped 1")
-                break
+          while True:
+            time.sleep(300)
+            self.observer.stop()
+            UDPSocket.sendto(np.array([0.0]).tobytes(),(hostnamePC, 8888))
+            print("Observer Stopped 1")
+            break
         except:
             UDPSocket.sendto(np.array([0.0]).tobytes(),(hostnamePC, 8888))
             self.observer.stop()
@@ -107,16 +107,16 @@ class Handler(FileSystemEventHandler):
     @staticmethod
     def on_any_event(event):
         if event.is_directory:
-            return None       
+          return None       
         elif event.event_type == 'created':
-            #print("Watchdog received created event - % s." % event.src_path)
-            if Handler.counter:
-                name = Handler.lastImg
-                img = cv2.imread('/dev/shm/'+name+'.bmp',cv2.IMREAD_GRAYSCALE)
-                if img is not None: Handler.coRout.send((img,int(name)))
-                os.remove('/dev/shm/'+name+'.bmp')
-            Handler.lastImg = event.src_path[-14:-4]
-            Handler.counter+=1
+          # print("Watchdog received created event - % s." % event.src_path)
+          if Handler.counter:
+            name = Handler.lastImg
+            img = cv2.imread('/dev/shm/'+name+'.bmp',cv2.IMREAD_GRAYSCALE)
+            if img is not None: Handler.coRout.send((img,int(name)))
+            os.remove('/dev/shm/'+name+'.bmp')
+          Handler.lastImg = event.src_path[-14:-4]
+          Handler.counter+=1
                     
                     
 if __name__ == '__main__':
@@ -128,7 +128,8 @@ if __name__ == '__main__':
         print('[RESULTS] '+str(len(times))+' valid images')
     else: print('[RESULTS] no valid images captured')
     print("Display frames with OpenCV...")
-    for frame in frames:
+    for fid, frame in enumerate(frames):
+        print(" Displaying Frame ", fid)
         cv2.imshow("Slow Motion", frame)
         cv2.waitKey(10) # request maximum refresh rate
 
