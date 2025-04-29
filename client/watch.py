@@ -2,6 +2,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import numpy as np
 import cv2,os,socket,time,argparse
+import traceback
 
 # parser for command line
 parser = argparse.ArgumentParser(description='''Image processing client for the MoCap system at the Erobotica lab of UFCG.
@@ -41,22 +42,33 @@ UDPSocket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
 hostnamePC = socket.gethostbyname('nuc.local')
 
 def imageProcessing():
-    counter=0          
+    counter=0
     bitsShift,constMultiplier,highThresh = 4,16,args.high
+    print("Check 1")
     while True:
         try:
+            print("Check 2")
             start=time.time()
             img,ts = (yield)
+            print("Check 3")
             _,thresh = cv2.threshold(img,highThresh,255,cv2.THRESH_BINARY)
+            print("Check 3a")
             coord = cv2.findNonZero(thresh).reshape(-1,2).T
+            print("Check 3b")
             xMin,xMax=min(coord[1]),max(coord[1])
+            print("Check 3c")
             yMin,yMax=min(coord[0]),max(coord[0]) 
+            print("Check 3d")
             # keypoints = detector.detect(cv2.bitwise_not(img[xMin-5:xMax+5),yMin-5:yMax+5])) 
             keypoints = detector.detect(cv2.bitwise_not(img[max(0, xMin-5):min(len(img[0]), xMax+5),max(0, yMin-5):min(len(img), yMax+5)]))
+            print("Check 3e")
             N = np.array(keypoints).shape[0]
+            print("Check 3f")
             msg = np.zeros(N*3+4)
+            print("Check 4")
             for i in range(N): 
                 msg[(i<<1)+i],msg[(i<<1)+i+1],msg[(i<<1)+i+2]=keypoints[i].pt[0],keypoints[i].pt[1],keypoints[i].size
+            print("Check 5")
             msg[-4],msg[-3],msg[-2],msg[-1]= xMin,yMin,ts,counter
             print("attempting to send...")
             UDPSocket.sendto(msg.tobytes(),(hostnamePC, 8888))
@@ -70,8 +82,14 @@ def imageProcessing():
             frames.append(imgWithKPts)
             times.append(time.time()-start)
             counter+=1
-        except GeneratorExit: return
-        except: continue
+        except GeneratorExit:
+            print("[ERROR] Exception in image processing:")
+            traceback.print_exc()
+            return
+        except:
+            print("[ERROR] Exception in image processing:")
+            traceback.print_exc()
+            continue
           
 class OnMyWatch:
     # Set the directoryframes on watch

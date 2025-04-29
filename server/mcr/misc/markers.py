@@ -9,7 +9,7 @@ def processCentroids(coord,a0,b0,cameraMatrix,distCoef):
     undCoord = np.copy(coord)
 
     for i in range(0,int(coord.shape[0])):
-        undCoord[i] = [undCoord[i][0]+b0-5,undCoord[i][1]+a0-5] 
+        undCoord[i] = [max(0, undCoord[i][0]+b0-5), max(0, undCoord[i][1]+a0-5)] 
 
     undCoord = undistortFisheye(undCoord,cameraMatrix,distCoef)  
 

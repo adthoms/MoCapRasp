@@ -66,7 +66,8 @@ class CaptureProcess(object):
             message = np.frombuffer(message, dtype=np.float64)
             print("Message: ", message)
 
-            self.imageSize[idx] = np.frombuffer(message, dtype=np.float64)
+            self.imageSize[idx] = len(message)
+            print("self.imageSize[idx]: ", self.imageSize[idx])
             print('[INFO] Camera ' + str(idx) + ' connected at ' + str(address[0]))
 
             addedCams.append(idx)
