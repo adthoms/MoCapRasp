@@ -1,15 +1,17 @@
 # IMPORTS >>> DO NOT CHANGE <<<
 import warnings
-warnings.filterwarnings('ignore')
+
+warnings.filterwarnings("ignore")
 import socket, time
 import numpy as np
 
 from mcr.misc.constants import cameraMat, distCoef
 
+
 class CaptureProcess(object):
-    def __init__(self,cameraids,markers,trigger,record,fps,verbose,save):
+    def __init__(self, cameraids, markers, trigger, record, fps, verbose, save):
         # VARIABLES >>> DO NOT CHANGE <<<
-        self.cameraids = str(cameraids).split(',')
+        self.cameraids = str(cameraids).split(",")
         self.cameras = len(self.cameraids)
         self.markers = markers
         self.triggerTime = trigger
@@ -22,9 +24,11 @@ class CaptureProcess(object):
 
         # IP lookup from hostname
         try:
-            self.ipList = [socket.gethostbyname(f'cam{idx}.local') for idx in self.cameraids]
+            self.ipList = [
+                socket.gethostbyname(f"cam{idx}.local") for idx in self.cameraids
+            ]
         except socket.gaierror as e:
-            print('[ERROR] Number of cameras do not match the number of IPs found')
+            print("[ERROR] Number of cameras do not match the number of IPs found")
             exit()
 
         self.cameraMat = np.copy(cameraMat)
@@ -33,33 +37,35 @@ class CaptureProcess(object):
         # Do not change below this line, socket variables
         self.nImages = int(self.record / self.step)
         self.imageSize = []
-        
-        for _ in range(self.cameras): 
+
+        for _ in range(self.cameras):
             self.imageSize.append([])
-        
-        print('[INFO] Creating server')
+
+        print("[INFO] Creating server")
 
         self.bufferSize = 1024
-        self.server_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM) 
-        self.server_socket.bind(('0.0.0.0',8888))
+        self.server_socket = socket.socket(
+            family=socket.AF_INET, type=socket.SOCK_DGRAM
+        )
+        self.server_socket.bind(("0.0.0.0", 8888))
 
     # Connect with clients
     def connect(self):
-        print('[INFO] Server running, waiting for clients')
+        print("[INFO] Server running, waiting for clients")
 
-        addedCams,ports=[],[]
+        addedCams, ports = [], []
         while len(addedCams) != self.cameras:
             # Collect addresses
             message, address = self.server_socket.recvfrom(self.bufferSize)
 
             # Check if it is in IP list
             if address[0] not in self.ipList:
-              print('[ERROR] IP ' + address[0] + ' not in the list')
-              exit()
+                print("[ERROR] IP " + address[0] + " not in the list")
+                exit()
 
             # Check if the address is already in ports
             if any(address[0] == port[0] for port in ports):
-              continue
+                continue
 
             # Get image size
             idx = self.ipList.index(address[0])
@@ -68,65 +74,110 @@ class CaptureProcess(object):
 
             self.imageSize[idx] = len(message)
             print("self.imageSize[idx]: ", self.imageSize[idx])
-            print('[INFO] Camera ' + str(idx) + ' connected at ' + str(address[0]))
+            print("[INFO] Camera " + str(idx) + " connected at " + str(address[0]))
 
             addedCams.append(idx)
             ports.append(address)
-        
-        print('[INFO] All clients connected')
+
+        print("[INFO] All clients connected")
 
         # Send trigger
         self.triggerTime += time.time()
         print(self.cameras)
-        for i in range(self.cameras): 
+        for i in range(self.cameras):
             print("ports[", i, "]: ")
             print(ports[i])
-            self.server_socket.sendto((str(self.triggerTime)+' '+str(self.record)).encode(),tuple(ports[i]))
-        print('[INFO] Trigger sent')
+            self.server_socket.sendto(
+                (str(self.triggerTime) + " " + str(self.record)).encode(),
+                tuple(ports[i]),
+            )
+        print("[INFO] Trigger sent")
 
     # New intrinsics
-    def intrinsics(self,origMatrix,w,h,mode):
-        camIntris = np.copy(origMatrix) # Copy to avoid register error
+    def intrinsics(self, origMatrix, w, h, mode):
+        camIntris = np.copy(origMatrix)  # Copy to avoid register error
 
-        print(w, h, w/h, mode)
+        print(w, h, w / h, mode)
         # Check if image is at the available proportion
-        if w/h==4/3 or w/h==16/9:
-            if mode==4: # Only resize
-                ratio = w/960
-                camIntris[0][0],camIntris[0][2]=ratio*camIntris[0][0],ratio*camIntris[0][2]
-                camIntris[1][1],camIntris[1][2]=ratio*camIntris[1][1],ratio*camIntris[1][2]
+        if w / h == 4 / 3 or w / h == 16 / 9:
+            if mode == 4:  # Only resize
+                ratio = w / 960
+                camIntris[0][0], camIntris[0][2] = (
+                    ratio * camIntris[0][0],
+                    ratio * camIntris[0][2],
+                )
+                camIntris[1][1], camIntris[1][2] = (
+                    ratio * camIntris[1][1],
+                    ratio * camIntris[1][2],
+                )
 
-            elif mode==5: # Crop in X and resize
-                ratio = 1640/960
-                camIntris[0][0],camIntris[0][2]=ratio*camIntris[0][0],ratio*camIntris[0][2]
-                camIntris[1][1],camIntris[1][2]=ratio*camIntris[1][1],ratio*camIntris[1][2]-155
-                ratio = w/1640
-                camIntris[0][0],camIntris[0][2]=ratio*camIntris[0][0],ratio*camIntris[0][2]
-                camIntris[1][1],camIntris[1][2]=ratio*camIntris[1][1],ratio*camIntris[1][2]
-            
-            elif mode==6: # Crop in Y and X and resize
-                ratio=1640/960
-                camIntris[0][0],camIntris[0][2]=ratio*camIntris[0][0],ratio*camIntris[0][2]-180
-                camIntris[1][1],camIntris[1][2]=ratio*camIntris[1][1],ratio*camIntris[1][2]-255
-                ratio = w/1280
-                camIntris[0][0],camIntris[0][2]=ratio*camIntris[0][0],ratio*camIntris[0][2]
-                camIntris[1][1],camIntris[1][2]=ratio*camIntris[1][1],ratio*camIntris[1][2]
+            elif mode == 5:  # Crop in X and resize
+                ratio = 1640 / 960
+                camIntris[0][0], camIntris[0][2] = (
+                    ratio * camIntris[0][0],
+                    ratio * camIntris[0][2],
+                )
+                camIntris[1][1], camIntris[1][2] = (
+                    ratio * camIntris[1][1],
+                    ratio * camIntris[1][2] - 155,
+                )
+                ratio = w / 1640
+                camIntris[0][0], camIntris[0][2] = (
+                    ratio * camIntris[0][0],
+                    ratio * camIntris[0][2],
+                )
+                camIntris[1][1], camIntris[1][2] = (
+                    ratio * camIntris[1][1],
+                    ratio * camIntris[1][2],
+                )
 
-            elif mode==7: # Crop in Y and X and resize
-                ratio=1640/960
-                camIntris[0][0],camIntris[0][2]=ratio*camIntris[0][0],ratio*camIntris[0][2]-500
-                camIntris[1][1],camIntris[1][2]=ratio*camIntris[1][1],ratio*camIntris[1][2]-375
-                ratio = w/640
-                camIntris[0][0],camIntris[0][2]=ratio*camIntris[0][0],ratio*camIntris[0][2]
-                camIntris[1][1],camIntris[1][2]=ratio*camIntris[1][1],ratio*camIntris[1][2]
+            elif mode == 6:  # Crop in Y and X and resize
+                ratio = 1640 / 960
+                camIntris[0][0], camIntris[0][2] = (
+                    ratio * camIntris[0][0],
+                    ratio * camIntris[0][2] - 180,
+                )
+                camIntris[1][1], camIntris[1][2] = (
+                    ratio * camIntris[1][1],
+                    ratio * camIntris[1][2] - 255,
+                )
+                ratio = w / 1280
+                camIntris[0][0], camIntris[0][2] = (
+                    ratio * camIntris[0][0],
+                    ratio * camIntris[0][2],
+                )
+                camIntris[1][1], camIntris[1][2] = (
+                    ratio * camIntris[1][1],
+                    ratio * camIntris[1][2],
+                )
+
+            elif mode == 7:  # Crop in Y and X and resize
+                ratio = 1640 / 960
+                camIntris[0][0], camIntris[0][2] = (
+                    ratio * camIntris[0][0],
+                    ratio * camIntris[0][2] - 500,
+                )
+                camIntris[1][1], camIntris[1][2] = (
+                    ratio * camIntris[1][1],
+                    ratio * camIntris[1][2] - 375,
+                )
+                ratio = w / 640
+                camIntris[0][0], camIntris[0][2] = (
+                    ratio * camIntris[0][0],
+                    ratio * camIntris[0][2],
+                )
+                camIntris[1][1], camIntris[1][2] = (
+                    ratio * camIntris[1][1],
+                    ratio * camIntris[1][2],
+                )
             else:
-                print('[ERROR] Unknow conversion for intrinsics matrix')
-                return False,camIntris
-            return True,camIntris
+                print("[ERROR] Unknow conversion for intrinsics matrix")
+                return False, camIntris
+            return True, camIntris
         else:
-            print('[ERROR] Out of proportion of the camera mode')
-            return False,camIntris
+            print("[ERROR] Out of proportion of the camera mode")
+            return False, camIntris
 
-    # This function is overriden at each custom capture process 
+    # This function is overriden at each custom capture process
     def collect(self):
         pass
