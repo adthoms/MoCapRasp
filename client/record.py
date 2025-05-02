@@ -80,7 +80,7 @@ print("[INFO] connecting to server")
 # now = time.time()
 # while now < start: now = time.time()
 # print('[INFO] delay in sec: ',now-start)
-max_frames = 10000
+max_frames = 500
 
 # running command
 cameraProcess = sp.Popen(videoCmd, stdout=sp.PIPE)  # start the camera
