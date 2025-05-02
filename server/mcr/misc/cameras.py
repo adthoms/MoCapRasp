@@ -97,7 +97,18 @@ def estimateFundMatrix_8norm(pts1, pts2, verbose=True):
         return 0, False
 
 
-def decomposeEssentialMat(E, K1, K2, pts1, pts2):
+def decomposeEssentialMat(E, K1, K2, pts1, pts2, cv2_compute=False):
+    if cv2_compute:
+        import cv2
+
+        retval, R, t, _ = cv2.recoverPose(E, pts1, pts2, K1)
+        if retval < len(pts1) * 0.5:
+            log.warning(
+                f"[CAM{cam}-{cam+1}] recoverPose returned low inliers: {retval}/{len(pts1)}"
+            )
+            return np.NaN, np.NaN
+        return R, t
+
     U, D, V = singularValueDecomposition(E)
     e = (D[0][0] + D[1][1]) / 2
     D = np.diag([e, e, 0])

@@ -92,20 +92,56 @@ def singularValueDecomposition(matrix):
 
 # FITTING
 
+import numpy as np
 
-def isCollinear(P1, P2, P3):
-    X, y = [[P1[0]], [P2[0]], [P3[0]]], [P1[1], P2[1], P3[1]]
-    reg = linear_model.LinearRegression()  # Create LS model
-    reg.fit(X, y)  # Fit model
-    a3, b3 = reg.coef_, reg.intercept_
-    y0_LS, y1_LS, y2_LS = (
-        abs(int(a3 * P1[0] + b3 - P1[1])),
-        abs(int(a3 * P2[0] + b3 - P2[1])),
-        abs(int(a3 * P3[0] + b3 - P3[1])),
+
+def isCollinear(P1, P2, P3, max_ratio=0.08, min_distance=10.0):
+    """
+    Determines if three 2D points are nearly collinear based on their relative geometry.
+
+    A triangle formed by the points is considered nearly collinear if the perpendicular
+    distance from the third point to the line defined by the first two points is
+    less than a specified ratio of the maximum pairwise distance.
+
+    Parameters:
+    - P1, P2, P3: iterable of length 2 (x, y) — The 2D points to check.
+    - max_ratio: float — Maximum allowed ratio of perpendicular distance to the
+      longest distance between any two points.
+    - min_distance: float — Minimum allowed distance between any two points to avoid
+      degenerate or overly clustered configurations.
+
+    Returns:
+    - True if the points are nearly collinear according to the ratio criterion.
+    - False otherwise.
+    """
+
+    P1, P2, P3 = np.array(P1), np.array(P2), np.array(P3)
+
+    max_point_dist = np.max(
+        [np.linalg.norm(P2 - P1), np.linalg.norm(P3 - P1), np.linalg.norm(P3 - P2)]
     )
-    m = (y0_LS + y1_LS + y2_LS) / 3
-    res = m < 1
-    return res
+    min_point_dist = np.min(
+        [np.linalg.norm(P2 - P1), np.linalg.norm(P3 - P1), np.linalg.norm(P3 - P2)]
+    )
+    # Reject degenerate cases (points too close to each other)
+    if min_point_dist < min_distance:
+        return False
+
+    # Vector from P1 to P2
+    line_vec = P2 - P1
+    line_unit = line_vec / np.linalg.norm(line_vec)
+
+    # Vector from P1 to P3
+    vec_to_P3 = P3 - P1
+
+    # Project and compute perpendicular distance
+    proj_length = np.dot(vec_to_P3, line_unit)
+    proj_point = P1 + proj_length * line_unit
+    perp_dist = np.linalg.norm(P3 - proj_point)
+
+    # Compute relative ratio
+    ratio = perp_dist / max_point_dist
+    return ratio < max_ratio
 
 
 # Interpolate data using cubic spline

@@ -12,9 +12,16 @@ parser = argparse.ArgumentParser(
 Use it with the corresponding server script.""",
     add_help=False,
 )
-parser.add_argument("-high", type=int, default=240, help="High threshold for bright blobs")
+parser.add_argument(
+    "-high", type=int, default=240, help="High threshold for bright blobs"
+)
 parser.add_argument("-area", type=float, default=2.0, help="Minimum area for blobs")
-parser.add_argument("--help", action="help", default=argparse.SUPPRESS, help="Show this help message and exit.")
+parser.add_argument(
+    "--help",
+    action="help",
+    default=argparse.SUPPRESS,
+    help="Show this help message and exit.",
+)
 args = parser.parse_args()
 
 os.system("rm -rf /dev/shm/*.bmp")
@@ -50,6 +57,7 @@ frames = []
 # -------------------------------
 UDPSocket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
 hostnamePC = socket.gethostbyname("nuc.local")
+
 
 # -------------------------------
 # Image processing coroutine
@@ -89,7 +97,9 @@ def imageProcessing():
             msg = np.zeros(N * 3 + 4)
             for i in range(N):
                 msg[(i << 1) + i], msg[(i << 1) + i + 1], msg[(i << 1) + i + 2] = (
-                    keypoints[i].pt[0], keypoints[i].pt[1], keypoints[i].size
+                    keypoints[i].pt[0],
+                    keypoints[i].pt[1],
+                    keypoints[i].size,
                 )
             msg[-4], msg[-3], msg[-2], msg[-1] = xMin, yMin, ts, counter
 
@@ -108,7 +118,15 @@ def imageProcessing():
                     int(np.round(keyPt.pt[1] * constMultiplier)),
                 )
                 radius = int(np.round(keyPt.size / 2 * constMultiplier))
-                cv2.circle(imgWithKPts, center, radius, (255, 0, 0), 1, lineType=16, shift=bitsShift)
+                cv2.circle(
+                    imgWithKPts,
+                    center,
+                    radius,
+                    (255, 0, 0),
+                    1,
+                    lineType=16,
+                    shift=bitsShift,
+                )
                 cv2.circle(imgWithKPts, center, 1, (0, 0, 255), -1, shift=bitsShift)
 
             frames.append(imgWithKPts)
@@ -122,6 +140,7 @@ def imageProcessing():
             print("[ERROR] Exception in image processing:")
             traceback.print_exc()
             continue
+
 
 # -------------------------------
 # Watchdog filesystem handler
@@ -146,6 +165,7 @@ class Handler(FileSystemEventHandler):
                 os.remove(path)
             Handler.lastImg = event.src_path[-14:-4]
             Handler.counter += 1
+
 
 # -------------------------------
 # Directory watch wrapper
@@ -172,6 +192,7 @@ class OnMyWatch:
             self.observer.stop()
             print("Observer Interrupted")
         self.observer.join()
+
 
 # -------------------------------
 # Main loop
