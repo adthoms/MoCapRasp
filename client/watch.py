@@ -123,9 +123,21 @@ def imageProcessing():
             print("attempting to send...")
             UDPSocket.sendto(msg.tobytes(), (hostnamePC, 8888))
             print("send successful.")
-            imgWithKPts = cv2.cvtColor(
-                img[xMin - 10 : xMax + 10, yMin - 10 : yMax + 10], cv2.COLOR_GRAY2BGR
-            )
+
+            x1 = max(0, xMin - 10)
+            x2 = min(img.shape[0], xMax + 10)
+            y1 = max(0, yMin - 10)
+            y2 = min(img.shape[1], yMax + 10)
+
+            cropped_region = img[x1:x2, y1:y2]
+            print(f"[DEBUG] Region to display: x=({x1},{x2}), y=({y1},{y2})")
+            if cropped_region.size == 0:
+                print(
+                    "[DEBUG] Cropped region is empty after expansion, skipping visualization."
+                )
+            else:
+                imgWithKPts = cv2.cvtColor(cropped_region, cv2.COLOR_GRAY2BGR)
+
             for keyPt in keypoints:
                 center = (
                     int(np.round(keyPt.pt[0] * constMultiplier)),
