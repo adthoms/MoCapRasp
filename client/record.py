@@ -1,153 +1,180 @@
 # Fast reading from the raspberry camera with Python, Numpy, and OpenCV
 # Made by @CarlosGS in May 2017
 # Adapted by @debOliveira in May 2022
+# Updated by @aaronjohnsabu1999 in May 2025
 # License: Public Domain, attribution appreciated
 
 import numpy as np
 import subprocess as sp
 import RPi.GPIO as GPIO
-import time, cv2, atexit, socket, argparse, selectors
+import time, cv2, atexit, socket, argparse, matplotlib.pyplot as plt
 
-# parser for command line
-parser = argparse.ArgumentParser(
-    description="""Capture client for the MoCap system at the Erobotica lab of UFCG.
-                                                \nPlease use it together with the corresponding server script.""",
-    add_help=False,
-)
-parser.add_argument("-w", type=int, help="image width (default: 960px)", default=960)
-parser.add_argument("-h", type=int, help="image height (default: 720px)", default=720)
-parser.add_argument(
-    "-fps", type=int, help="frames per second (default: 40FPS)", default=40
-)
-parser.add_argument("-ag", type=int, help="camera analog gain (default: 2)", default=2)
-parser.add_argument("-dg", type=int, help="camera digital gain (default: 4)", default=4)
-parser.add_argument("-md", type=int, default=4, help="camera mode (default: 4)")
-parser.add_argument(
-    "--help",
-    action="help",
-    default=argparse.SUPPRESS,
-    help="Show this help message and exit.",
-)
-args = parser.parse_args()
-frames = []
-N_frames = 0
 
-# video capture parameters
-(w, h) = (args.w, args.h)
-bytesPerFrame = w * h
-md, ag, dg, fps = args.md, args.ag, args.dg, args.fps
-winH = int(h * 960 / w)
-# video capture command
-videoCmd = (
-    "./raspividyuv --save-pts - -t 0 --output - -w "
-    + str(w)
-    + " -h "
-    + str(h)
-    + " -p 0,0,960,"
-    + str(winH)
-    + " -md "
-    + str(md)
-    + " -fps "
-    + str(fps)
-    + " --luma -fli off -cfx 128,128 -ex off -awb off --awbgains 1.3,1.8 -ag "
-    + str(ag)
-    + " -dg "
-    + str(dg)
-    + " -co 100"
-)
-videoCmd = videoCmd.split()  # Popen requires that each parameter is a separate string
-print(
-    "[INFO] Size " + str(w) + "x" + str(h) + ", FPS " + str(fps) + ", mode " + str(md)
-)
+def parse_args():
+    # parser for command line
+    parser = argparse.ArgumentParser(
+        description="""Capture client for the MoCap system at the Erobotica lab of UFCG. 
+                       Please use it together with the corresponding server script.""",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        add_help=False,
+    )
 
-# turning LED on
-GPIO.setmode(GPIO.BCM)
-GPIO.setwarnings(False)
-led = 4
-GPIO.setup(led, GPIO.OUT)
-print("[INFO] LED on and parameters configured")
-GPIO.output(led, 1)
+    # Camera settings
+    parser.add_argument("-w", type=int, default=960, help="Image width")
+    parser.add_argument("-h", type=int, default=720, help="Image height")
+    parser.add_argument("-fps", type=int, default=40, help="Frames per second")
+    parser.add_argument("-md", type=int, default=4, help="Camera mode")
+    parser.add_argument("-ag", type=int, default=2, help="Analog gain")
+    parser.add_argument("-dg", type=int, default=4, help="Digital gain")
+    parser.add_argument("-ex", type=str, default="off", help="Exposure mode")
+    parser.add_argument("-ss", type=int, default=0, help="Shutter speed in µs")
+    parser.add_argument("-awb", type=str, default="off", help="Auto white balance mode")
+    parser.add_argument(
+        "--awbgains", type=str, default="1.3,1.8", help="AWB gains (r,g)"
+    )
+    parser.add_argument("-co", type=int, default=100, help="Contrast (0–100)")
+    parser.add_argument("-fli", type=str, default="off", help="Flicker avoidance")
+    parser.add_argument("-cfx", type=str, default="128,128", help="Color FX (u,v)")
+    return parser.parse_args()
 
-# server parameters
-print("[INFO] connecting to server")
-# hostnamePC = socket.gethostbyname('nuc.local')
-# UDPSocket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
-# UDPSocket.sendto(str(str(w)+','+str(h)+','+str(md)).encode(),(hostnamePC, 8888))
-# message,_ = UDPSocket.recvfrom(1024)
-# start = float(message.split()[0])
-# max_frames = int(message.split()[1])*fps
-# print('[INFO] waiting trigger')
-# now = time.time()
-# while now < start: now = time.time()
-# print('[INFO] delay in sec: ',now-start)
-max_frames = 500
 
-# running command
-cameraProcess = sp.Popen(videoCmd, stdout=sp.PIPE)  # start the camera
-atexit.register(
-    cameraProcess.terminate
-)  # this closes the camera process in case the python scripts exits unexpectedly
-print("[INFO] RECORDING ...")
+class CaptureSession:
+    def __init__(self, args):
+        self.args = args
+        self.frames = []  # stores timestamps
+        self.n_frames = 0
+        self.max_frames = 500
+        self.w, self.h = args.w, args.h
+        self.bytes_per_frame = self.w * self.h
+        self.winH = int(self.h * 960 / self.w)
+        self.led_pin = 4
+        self.video_cmd = self.build_command()
+        self.camera_proc = None
 
-start = time.time()
-while True:
-    # capture frame
-    frame = np.frombuffer(cameraProcess.stdout.read(bytesPerFrame), dtype=np.uint8)
-    if frame.size != bytesPerFrame:
-        print("[ERROR] Camera stream closed unexpectedly")
-        break
-    frame.shape = (h, w)
-    # capture timestamp
-    ts = cameraProcess.stdout.readline()[-11:-1].decode().strip()
-    # write image
-    cv2.imwrite("/dev/shm/" + ts.zfill(10) + ".bmp", frame)
-    # free memory
-    cameraProcess.stdout.flush()
-    del frame
-    # count frame
-    N_frames += 1
-    if N_frames == max_frames:
-        break
+    def build_command(self):
+        # Construct raspividyuv command from arguments
+        return [
+            "./raspividyuv",
+            "--save-pts",
+            "-",
+            "-t",
+            "0",
+            "--output",
+            "-",
+            "-w",
+            str(self.args.w),
+            "-h",
+            str(self.args.h),
+            "-fps",
+            str(self.args.fps),
+            "-md",
+            str(self.args.md),
+            "-ag",
+            str(self.args.ag),
+            "-dg",
+            str(self.args.dg),
+            "-ex",
+            self.args.ex,
+            "-ss",
+            str(self.args.ss),
+            "-awb",
+            self.args.awb,
+            "--awbgains",
+            self.args.awbgains,
+            "-co",
+            str(self.args.co),
+            "-fli",
+            self.args.fli,
+            "-cfx",
+            self.args.cfx,
+            "--luma",
+        ]
 
-# closing buffer
-end = time.time() - start
-cameraProcess.terminate()
-GPIO.output(led, 0)
-print("[INFO] buffer closed and LED off")
+    def setup_gpio(self):
+        # turning LED on
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setwarnings(False)
+        GPIO.setup(self.led_pin, GPIO.OUT)
+        GPIO.output(self.led_pin, 1)
+        print("[INFO] LED on and parameters configured")
 
-# verbose
-elapsed_seconds = float(ts) / 1e6
-print(
-    "[RESULTS] "
-    + str(round(N_frames / elapsed_seconds, 2))
-    + " FPS (PTS) and "
-    + str(round(N_frames / end, 2))
-    + " FPS (time lib)"
-)
+    def shutdown(self):
+        # closing buffer
+        if self.camera_proc:
+            self.camera_proc.terminate()
+        GPIO.output(self.led_pin, 0)
+        print("[INFO] buffer closed and LED off")
 
-### DEBUG ###
-"""plt.figure(figsize=(4,3))
-plt.plot(np.diff(np.array(frames).astype(float)/1e6),label='Achieved FPS period')
-plt.axhline(y=1/fps,color='r',linestyle='-',label='Reference FPS period')
-plt.xlim(0,np.array(frames).shape[0])
-plt.legend(loc='best')
-plt.grid()
-plt.xlabel('Image number')
-plt.ylabel('Period to previous picture (ms)')
-plt.title('FPS period achieved at '+str(h)+'p, '+str(fps)+'FPS')
-plt.savefig(str(h)+'p'+str(fps)+'FPS.png',dpi=300,bbox_inches="tight")
+    def start_recording(self):
+        print("[INFO] raspividyuv command:", " ".join(self.video_cmd))
+        print("[INFO] connecting to server")
+        self.setup_gpio()
 
-print("Writing frames to disk...")
-out = cv2.VideoWriter("slow_motion.avi", cv2.cv.CV_FOURCC(*"MJPG"), 30, (w,h))
-for n in range(N_frames):
-    #cv2.imwrite("frame"+str(n)+".png", frames[n]) # save frame as a PNG image
-    frame_rgb = cv2.cvtColor(frames[n],cv2.COLOR_GRAY2RGB) # video codec requires RGB image
-    out.write(frame_rgb)
-out.release()
+        # Start the camera
+        self.camera_proc = sp.Popen(self.video_cmd, stdout=sp.PIPE)
+        atexit.register(self.shutdown)
 
-print("Display frames with OpenCV...")
-for frame in frames:
-    cv2.imshow("Slow Motion", frame)
-    cv2.waitKey(10) # request maximum refresh rate
-    
-cv2.destroyAllWindows()"""
+        print("[INFO] RECORDING ...")
+        start_time = time.time()
+
+        while self.n_frames < self.max_frames:
+            frame = np.frombuffer(
+                self.camera_proc.stdout.read(self.bytes_per_frame), dtype=np.uint8
+            )
+            if frame.size != self.bytes_per_frame:
+                print("[ERROR] Camera stream closed unexpectedly")
+                break
+            frame.shape = (self.h, self.w)
+
+            ts = self.camera_proc.stdout.readline()[-11:-1].decode().strip()
+            self.frames.append(ts)
+            cv2.imwrite("/dev/shm/" + ts.zfill(10) + ".bmp", frame)
+            self.camera_proc.stdout.flush()
+            del frame
+            self.n_frames += 1
+
+        end_time = time.time()
+        self.shutdown()
+
+        elapsed_seconds = float(self.frames[-1]) / 1e6 if self.frames else 1.0
+        print(
+            "[RESULTS] "
+            + str(round(self.n_frames / elapsed_seconds, 2))
+            + " FPS (PTS) and "
+            + str(round(self.n_frames / (end_time - start_time), 2))
+            + " FPS (time lib)"
+        )
+
+    def plot_fps_timeline(self):
+        """Optional FPS timeline plotting"""
+        if len(self.frames) < 2:
+            print("[WARN] Not enough frames for FPS plotting.")
+            return
+
+        timestamps = np.array(self.frames).astype(float) / 1e6
+        fps_periods = np.diff(timestamps)
+
+        plt.figure(figsize=(4, 3))
+        plt.plot(fps_periods, label="Achieved FPS period")
+        plt.axhline(
+            y=1 / self.args.fps, color="r", linestyle="-", label="Reference FPS period"
+        )
+        plt.xlim(0, len(fps_periods))
+        plt.legend(loc="best")
+        plt.grid()
+        plt.xlabel("Image number")
+        plt.ylabel("Period to previous picture (s)")
+        plt.title(f"FPS period at {self.h}p, {self.args.fps}FPS")
+        plt.savefig(f"{self.h}p{self.args.fps}FPS.png", dpi=300, bbox_inches="tight")
+        print(f"[INFO] FPS plot saved to {self.h}p{self.args.fps}FPS.png")
+
+
+def main():
+    args = parse_args()
+    session = CaptureSession(args)
+    session.start_recording()
+    # Optional: call session.plot_fps_timeline() if you want the plot
+
+
+if __name__ == "__main__":
+    main()

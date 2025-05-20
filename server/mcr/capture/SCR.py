@@ -22,7 +22,7 @@ from mcr.misc.markers import (
     getOrderPerEpiline,
     popNeedsOrder,
 )
-from mcr.misc.plot import plotArena
+from mcr.misc.plot import ArenaViewer, Frame
 
 
 class SCR(CaptureProcess):
@@ -562,9 +562,9 @@ class SCR(CaptureProcess):
             cameraData = {"cameraHeight": h, "projectionMatrices": projMat}
 
             # Plotting
-            plotArena(
-                title="Capture Plot Analysis",
-                allPoints3d=allPoints3d,
-                cameraData=cameraData,
-                groundData=groundData,
-            )
+            # plotArena(
+            #     title="Capture Plot Analysis",
+            #     allPoints3d=allPoints3d,
+            #     cameraData=cameraData,
+            #     groundData=groundData,
+            # )

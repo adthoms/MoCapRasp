@@ -1,8 +1,11 @@
 import numpy as np
+import logging
 from cv2.fisheye import undistortPoints
 
 from mcr.misc.math import normalizePoints, singularValueDecomposition
 
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+log = logging.getLogger(__name__)
 # LINEAR CAMERA MODEL
 
 
@@ -103,9 +106,7 @@ def decomposeEssentialMat(E, K1, K2, pts1, pts2, cv2_compute=False):
 
         retval, R, t, _ = cv2.recoverPose(E, pts1, pts2, K1)
         if retval < len(pts1) * 0.5:
-            log.warning(
-                f"[CAM{cam}-{cam+1}] recoverPose returned low inliers: {retval}/{len(pts1)}"
-            )
+            log.warning(f"recoverPose returned low inliers: {retval}/{len(pts1)}")
             return np.NaN, np.NaN
         return R, t
 

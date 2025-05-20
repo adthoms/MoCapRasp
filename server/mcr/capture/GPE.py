@@ -1,4 +1,3 @@
-# IMPORTS >>> DO NOT CHANGE <<<
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -12,7 +11,7 @@ from mcr.capture.CaptureProcess import CaptureProcess
 from mcr.misc.math import findPlane
 from mcr.misc.cameras import projectionPoints
 from mcr.misc.markers import processCentroids, getOrderPerEpiline
-from mcr.misc.plot import plotArena
+from mcr.misc.plot import ArenaViewer, Frame
 
 
 class GPE(CaptureProcess):
@@ -21,7 +20,7 @@ class GPE(CaptureProcess):
         print("[INFO] waiting capture")
 
         # Internal variables
-        capture, counter = np.ones(self.cameras, dtype=np.bool), np.zeros(
+        capture, counter = np.ones(self.cameras, dtype=bool), np.zeros(
             self.cameras, dtype=np.int8
         )
         dfSave, dfOrig = [], []
@@ -221,12 +220,12 @@ class GPE(CaptureProcess):
             allPoints3d += [0, 0, -h, 0]
             allPoints3d = allPoints3d.T
 
-            plotArena(
-                title="Ground Plane Estimation",
-                allPoints3d=allPoints3d,
-                cameraData=cameraData,
-                groundData=groundData,
-            )
+            # plotArena(
+            #     title="Ground Plane Estimation",
+            #     allPoints3d=allPoints3d,
+            #     cameraData=cameraData,
+            #     groundData=groundData,
+            # )
 
             # Save data
             np.savetxt("mcr/capture/data/P_plane.csv", np.array(P_plane), delimiter=",")
