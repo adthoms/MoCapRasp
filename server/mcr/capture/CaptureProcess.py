@@ -1,15 +1,44 @@
 # IMPORTS >>> DO NOT CHANGE <<<
 import warnings
-
-warnings.filterwarnings("ignore")
 import socket, time
 import numpy as np
+from dataclasses import dataclass, field
 
 from mcr.misc.constants import cameraMat, distCoef
 
+warnings.filterwarnings("ignore")
+
+
+@dataclass
+class CameraState:
+    """
+    Holds per-camera state during capture, including frame counters, timestamps,
+    undistorted marker coordinates, and certainty intervals for calibration.
+    """
+
+    capture_active: bool = True  # Whether this camera is still streaming
+    frame_counter: int = 0  # Number of frames successfully received
+    last_timestamp: int = 0  # Timestamp of the last valid frame
+    missed_frames: int = 0  # Count of missed frames due to parsing errors or occlusion
+    invalid_frames: int = 0  # Count of invalid frames since last good frame
+    swap_counter: int = 0  # Counter for marker reordering validation
+    has_certainty: bool = False  # Whether the current marker sequence is confirmed
+    last_image_id: int = -1  # Last received image ID from this camera
+    intervals: list = field(
+        default_factory=list
+    )  # Frame-based indices where marker certainty begins
+    time_intervals: list = field(
+        default_factory=list
+    )  # List of valid timestamp intervals for calibration
+    undistorted_frames: list = field(
+        default_factory=list
+    )  # All undistorted marker coordinates with timestamps
+
 
 class CaptureProcess(object):
-    def __init__(self, cameraids, markers, trigger, record, fps, verbose, save):
+    def __init__(
+        self, cameraids, markers, trigger, record, fps, verbose, save, *args, **kwargs
+    ):
         # VARIABLES >>> DO NOT CHANGE <<<
         self.cameraids = str(cameraids).split(",")
         self.cameras = len(self.cameraids)

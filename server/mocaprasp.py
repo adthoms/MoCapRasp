@@ -37,7 +37,27 @@ def mocaprasp():
     "--verbose", "-v", is_flag=True, help="Show ordering and interpolation verbosity"
 )
 @click.option("--save", "-s", is_flag=True, help="Save received packages to CSV")
-def cec(cameraids, markers, trigger, record, fps, verbose, save):
+@click.option("--dbscan-eps", default=0.01, help="DBSCAN epsilon for clustering")
+@click.option(
+    "--dbscan-min-samples", default=10, help="DBSCAN minimum samples for clustering"
+)
+@click.option(
+    "--use-clustering",
+    is_flag=True,
+    help="Enable 3D clustering for consensus filtering",
+)
+def cec(
+    cameraids,
+    markers,
+    trigger,
+    record,
+    fps,
+    verbose,
+    save,
+    dbscan_eps,
+    dbscan_min_samples,
+    use_clustering,
+):
     """
     Camera Extrinsics Calibration\n\n
     - Place 3 collinear markers in the calibration wand;\n
@@ -45,7 +65,18 @@ def cec(cameraids, markers, trigger, record, fps, verbose, save):
     - Show it to each adjacent pair of cameras.\n\n
     The default options are already adjusted for this process.
     """
-    cecServer = CEC(cameraids, markers, trigger, record, fps, verbose, save)
+    cecServer = CEC(
+        cameraids,
+        markers,
+        trigger,
+        record,
+        fps,
+        verbose,
+        save,
+        dbscan_eps,
+        dbscan_min_samples,
+        use_clustering,
+    )
     cecServer.connect()
     cecServer.collect()
 

@@ -40,20 +40,16 @@ def getAngle(u, v):
 # LINEAR ALGEBRA
 
 
-# FIXME: Avoid reshaping!!
 def reshapeCoord(coord):
-    # First reshape array of coordinates
-    coordCopy = np.array(coord).reshape(6)
+    """
+    Reshapes a flat coordinate list or array of shape (N*2,) or (N, 2)
+    into separate X and Y arrays.
 
-    # Get the Y coordinates of each markers' center
-    coordX, coordY = [coordCopy[0], coordCopy[2], coordCopy[4]], [
-        coordCopy[1],
-        coordCopy[3],
-        coordCopy[5],
-    ]
-
-    return coordX, coordY
-
+    Returns:
+        coordX: list of X coordinates
+        coordY: list of Y coordinates
+    """
+    return np.asarray(coord).reshape(-1, 2).T
 
 def normalizePoints(pts):
     # Calculate origin centroid
@@ -166,17 +162,12 @@ def interpolate(coords, timestamps, steps):
 # UTILITY
 
 
-def getSignal(N1, N2, tol=10 ** (-6)):
-    if abs(N1 - N2) <= tol:
+def getSignal(n1, n2, tol=1e-6):
+    if abs(n1 - n2) <= tol:
         return 0, False
-    if (N1 - N2) < 0:
-        return -1, True
-    else:
-        return 1, True
+    return (-1 if (n1 - n2) < 0 else 1), True
 
 
 def swapElements(arr, idx1, idx2):
-    aux = arr[idx1]
-    arr[idx1] = arr[idx2]
-    arr[idx2] = aux
+    arr[idx1], arr[idx2] = arr[idx2], arr[idx1]
     return arr

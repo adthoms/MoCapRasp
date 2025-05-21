@@ -3,15 +3,12 @@ import warnings
 import logging
 import numpy as np
 from datetime import datetime
-from collections import Counter
 from itertools import combinations
-from sklearn.cluster import DBSCAN
 from dataclasses import dataclass, field
 from scipy.interpolate import CubicSpline
 from cv2 import destroyAllWindows, triangulatePoints
 
-from mcr.capture.CaptureProcess import CaptureProcess
-from mcr.misc.math import isCollinear
+from mcr.capture.CaptureProcess import CaptureProcess, CameraState
 from mcr.misc.cameras import (
     estimateFundMatrix_8norm,
     decomposeEssentialMat,
@@ -24,32 +21,6 @@ from mcr.misc.plot import ArenaViewer, Frame
 warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
-
-
-@dataclass
-class CameraState:
-    """
-    Holds per-camera state during capture, including frame counters, timestamps,
-    undistorted marker coordinates, and certainty intervals for calibration.
-    """
-
-    capture_active: bool = True  # Whether this camera is still streaming
-    frame_counter: int = 0  # Number of frames successfully received
-    last_timestamp: int = 0  # Timestamp of the last valid frame
-    missed_frames: int = 0  # Count of missed frames due to parsing errors or occlusion
-    invalid_frames: int = 0  # Count of invalid frames since last good frame
-    swap_counter: int = 0  # Counter for marker reordering validation
-    has_certainty: bool = False  # Whether the current marker sequence is confirmed
-    last_image_id: int = -1  # Last received image ID from this camera
-    intervals: list = field(
-        default_factory=list
-    )  # Frame-based indices where marker certainty begins
-    time_intervals: list = field(
-        default_factory=list
-    )  # List of valid timestamp intervals for calibration
-    undistorted_frames: list = field(
-        default_factory=list
-    )  # All undistorted marker coordinates with timestamps
 
 
 @dataclass
@@ -91,8 +62,17 @@ class CEC(CaptureProcess):
         super().__init__(*args, **kwargs)
         self.dbscan_eps = kwargs.get("dbscan_eps", 0.01)
         self.dbscan_min_samples = kwargs.get("dbscan_min_samples", 10)
+        self.use_clustering = kwargs.get("use_clustering", False)
         self.camera_states = [CameraState() for _ in range(self.cameras)]
         self.calibration_result = CalibrationResult()
+        self.marker_positions = [
+            (0.0, 0.0),
+            (9.0, 0.0),
+            (0.0, 10.4),
+            # (0.0, 6.1),
+        ]
+        # self.marker_positions = kwargs.get("marker_positions", default_list_of_tuples)
+        # self.markers = len(self.marker_positions)
 
     def collect(self) -> None:
         """
@@ -142,6 +122,7 @@ class CEC(CaptureProcess):
         msg = message[0 : size_msg - 4].reshape(-1, 3)
         coord, size = msg[:, 0:2], msg[:, 2].reshape(-1)
 
+        max_area = -1
         if size_msg > 13:
             order = np.argsort(size)[::-1]
             coord_sorted = coord[order[:4]]
@@ -313,9 +294,15 @@ class CEC(CaptureProcess):
         and stores projection matrices and triangulated points.
         """
         # Define true distances from your marker configuration
-        L_AC = np.linalg.norm(np.array([0, 0]) - np.array([0, 10.4]))  # Marker 0 to 3
-        L_AB = np.linalg.norm(np.array([0, 0]) - np.array([9, 0]))  # Marker 0 to 1
-        L_BC = np.linalg.norm(np.array([9, 0]) - np.array([0, 6.1]))  # Marker 1 to 2
+        marker_layout = {
+            i: np.array([x, y, 0.0])  # You must populate this from config or CLI
+            for i, (x, y) in enumerate(self.marker_positions)
+        }
+
+        L_pairs = {
+            f"L_{i}{j}": np.linalg.norm(marker_layout[i] - marker_layout[j])
+            for i, j in combinations(marker_layout, 2)
+        }
 
         for cam in range(self.cameras - 1):
             state1, state2 = self.camera_states[cam], self.camera_states[cam + 1]
@@ -432,27 +419,30 @@ class CEC(CaptureProcess):
             points3d_scaled = points3d * lamb
 
             # Consensus points
-            consensus_points = self.compute_consensus_points(
-                points3d_scaled,
-                n=4,
-                eps=self.dbscan_eps,
-                min_samples=self.dbscan_min_samples,
-            )
-            if len(consensus_points) < 4:
-                log.warning(
-                    f"[CAM{cam}-{cam+1}] Not enough consensus points found. Using all points."
+            if self.use_clustering:
+                consensus_points = self.compute_consensus_points(
+                    points3d_scaled,
+                    n=4,
+                    eps=self.dbscan_eps,
+                    min_samples=self.dbscan_min_samples,
+                )
+                if len(consensus_points) < 4:
+                    log.warning(
+                        f"[CAM{cam}-{cam+1}] Not enough consensus points found. Using all points."
+                    )
+                    consensus_points = points3d_scaled
+                else:
+                    consensus_points = np.array(consensus_points)
+                    consensus_points = np.unique(consensus_points, axis=0)
+                    consensus_points = consensus_points[
+                        np.linalg.norm(consensus_points, axis=1) < 100
+                    ]
+                log.info(f"[CONSENSUS] Found {len(consensus_points)} stable 3D points:")
+            else:
+                log.info(
+                    f"[CAM{cam}-{cam+1}] Clustering disabled. Using all triangulated points."
                 )
                 consensus_points = points3d_scaled
-            else:
-                consensus_points = np.array(consensus_points)
-                consensus_points = np.unique(consensus_points, axis=0)
-                consensus_points = consensus_points[
-                    np.linalg.norm(consensus_points, axis=1) < 100
-                ]
-
-            log.info(f"[CONSENSUS] Found {len(consensus_points)} stable 3D points:")
-            for i, pt in enumerate(consensus_points):
-                log.info(f"  Point {i+1}: ({pt[0]:.4f}, {pt[1]:.4f}, {pt[2]:.4f})")
 
             self.calibration_result.rotations.append(R)
             self.calibration_result.translations.append(t.reshape(-1).tolist())
@@ -462,6 +452,12 @@ class CEC(CaptureProcess):
             log.info(
                 f"[CAM{cam}-{cam+1}] Calibration done. Scale: {lamb:.2f}, Points: {len(points3d_scaled)}"
             )
+
+        if not self.calibration_result.scales:
+            log.error(
+                "No valid extrinsic calibration computed. Skipping projection matrix computation."
+            )
+            return
 
         base_lambda = self.calibration_result.scales[0]
         self.calibration_result.scales = [
@@ -508,6 +504,7 @@ class CEC(CaptureProcess):
             log.info(f"Camera {i} world position: {pos}")
 
     def _save_calibration_results(self) -> None:
+
         result = self.calibration_result
         np.savetxt("mcr/capture/data/R.csv", np.ravel(result.rotations), delimiter=",")
         np.savetxt(
@@ -551,6 +548,9 @@ class CEC(CaptureProcess):
         """
         Cluster 3D points and return centroids of the n most populated clusters.
         """
+        from sklearn.cluster import DBSCAN
+        from collections import Counter
+
         if points3d.shape[0] < min_samples:
             log.warning("Not enough points for DBSCAN clustering.")
             return points3d

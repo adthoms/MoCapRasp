@@ -231,44 +231,87 @@ def getOrderPerEpiline(coord1, coord2, nMarkers, F, verbose=0, retValue=0):
 
 
 def getOrder(centerX, centerY, baseAxis=False, axis=1):
-    # get wand direction
-    distY, distX = (
-        np.array(centerY).max() - np.array(centerY).min(),
-        np.array(centerX).max() - np.array(centerX).min(),
-    )
-    # define the order of the markers
-    if not baseAxis:  # if there is no axis to compare, get maximum dist
-        if distY > distX:
-            order, axis = np.argsort(centerY), 1
-        else:
-            order, axis = np.argsort(centerX), 0
-    else:  # if there is a previous frame, compare to its axis
-        if axis:
-            order = np.argsort(centerY)
-        else:
-            order = np.argsort(centerX)
+    """
+    Determine the order of markers based on their spatial distribution.
 
+    Parameters
+    ----------
+    centerX : array-like
+        List or array of x-coordinates of markers.
+    centerY : array-like
+        List or array of y-coordinates of markers.
+    baseAxis : bool, optional
+        If True, use the given `axis` for ordering. If False, determine axis
+        based on which coordinate has the greater spread. Default is False.
+    axis : int, optional
+        Axis to use for ordering if `baseAxis` is True.
+        0 for x-axis, 1 for y-axis. Default is 1.
+
+    Returns
+    -------
+    order : ndarray
+        Indices that would sort the markers along the chosen axis.
+    axis : int
+        The axis used for sorting (0 for x-axis, 1 for y-axis).
+    """
+    centerX, centerY = np.array(centerX), np.array(centerY)
+    distY, distX = centerY.max() - centerY.min(), centerX.max() - centerX.min()
+    if not baseAxis:
+        axis = 1 if distY > distX else 0
+
+    order = np.argsort(centerY if axis else centerX)
     return order, axis
 
 
-def findNearestC(nearestA, nearestB):  # get the numer missing from the array [0,1,2]
-    vec = np.array([nearestA, nearestB])
-    (is0,) = np.where(vec == 0)
-    (is1,) = np.where(vec == 1)
-    is0, is1 = len(is0), len(is1)
+def findNearestC(nearestA, nearestB):
+    """
+    Return the missing integer from the set {0, 1, 2}
+    given two known distinct values.
 
-    if is0:
-        if is1:
-            return 2
-        else:
-            return 1
-    else:
-        return 0
+    Parameters
+    ----------
+    nearestA : int
+        First known value (0, 1, or 2).
+    nearestB : int
+        Second known value (0, 1, or 2).
+
+    Returns
+    -------
+    int
+        The value in {0, 1, 2} not present in the input.
+    """
+    vals = {nearestA, nearestB}
+    for i in (0, 1, 2):
+        if i not in vals:
+            return i
 
 
 def orderCenterCoord(centerCoord, prevCenterCoord, otherCamOrder=0):
+    """
+    Orders a set of 2D center coordinates for 3 or more markers.
+
+    This function handles initial ordering for the first frame and
+    maintains consistent ordering across subsequent frames by matching
+    current markers to previous markers.
+
+    Parameters:
+    - centerCoord (np.ndarray): Current 2D coordinates of markers (N, 2).
+    - prevCenterCoord (np.ndarray): Previous 2D coordinates of markers (N, 2).
+                                    Empty array/list for the first frame.
+    - otherCamOrder (int): A signal from another camera for initial ordering.
+                           0 if this is the first camera determining the order.
+
+    Returns:
+    - sortedCenterCoord (np.ndarray): The ordered 2D coordinates.
+    - otherCamOrder (int): The determined or used otherCamOrder signal.
+    """
+    centerCoord = np.asarray(centerCoord).reshape(-1, 2)
+    num_markers = centerCoord.shape[0]
+
+    # Handle cases where no markers are detected
+    if num_markers == 0:
+        return np.array([]).reshape(0, 2), 0
     centerX, centerY = reshapeCoord(centerCoord)
-    # If it is the first image of the sequence
 
     if len(prevCenterCoord) == 0:
         order, _ = getOrder(centerX, centerY)
@@ -346,7 +389,6 @@ def orderCenterCoord(centerCoord, prevCenterCoord, otherCamOrder=0):
     return sortedCenterCoord, otherCamOrder
 
 
-# TODO: Where is this applied ???
 def getPreviousCentroid(noPrevious, lastCentroid):
     if not noPrevious:
         return []
