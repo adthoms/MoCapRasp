@@ -188,7 +188,7 @@ def decomposeEssentialMat(E, K1, K2, pts1, pts2, cv2_compute=False, log=None):
 
     # R = Rs[idx]
     # t = Ts[idx]
-    
+
     valid_threshold = 0.25  # require at least 25% points to be in front
     min_negatives = numNegatives.min()
     min_index = numNegatives.argmin()

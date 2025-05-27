@@ -7,6 +7,14 @@ import numpy as np
 import subprocess as sp
 import RPi.GPIO as GPIO
 import time, cv2, atexit, socket, argparse, matplotlib.pyplot as plt
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+
+log = logging.getLogger(__name__)
 
 
 def parse_args():
@@ -60,7 +68,9 @@ class CaptureSession:
         self.args = args
         self.frames = []  # Stores timestamps for FPS analysis
         self.n_frames = 0
-        self.max_frames = args.max_frames  # Number of frames to capture (can be exposed later)
+        self.max_frames = (
+            args.max_frames
+        )  # Number of frames to capture (can be exposed later)
         self.w, self.h = args.w, args.h
         self.bytes_per_frame = self.w * self.h  # Grayscale frame size
         self.led_pin = 4  # GPIO pin number used to turn on IR LED ring
@@ -118,7 +128,7 @@ class CaptureSession:
         GPIO.setwarnings(False)
         GPIO.setup(self.led_pin, GPIO.OUT)
         GPIO.output(self.led_pin, 1)
-        print("[INFO] LED on and parameters configured")
+        log.info("LED on and parameters configured")
 
     def shutdown(self):
         """
@@ -127,22 +137,22 @@ class CaptureSession:
         if self.camera_proc:
             self.camera_proc.terminate()
         GPIO.output(self.led_pin, 0)
-        print("[INFO] buffer closed and LED off")
+        log.info("Buffer closed and LED off")
 
     def start_recording(self):
         """
         Run the main loop: capture N frames and save them to /dev/shm/.
         Also tracks frame timestamps for timing diagnostics.
         """
-        print("[INFO] raspividyuv command:", " ".join(self.video_cmd))
-        print("[INFO] connecting to server")
+        log.info("raspividyuv command: %s", " ".join(self.video_cmd))
+        log.info("Connecting to server")
         self.setup_gpio()
 
         # Start raspividyuv streaming
         self.camera_proc = sp.Popen(self.video_cmd, stdout=sp.PIPE)
         atexit.register(self.shutdown)
 
-        print("[INFO] RECORDING ...")
+        log.info("RECORDING ...")
         start_time = time.time()
 
         while self.n_frames < self.max_frames:
@@ -150,7 +160,7 @@ class CaptureSession:
                 self.camera_proc.stdout.read(self.bytes_per_frame), dtype=np.uint8
             )
             if frame.size != self.bytes_per_frame:
-                print("[ERROR] Camera stream closed unexpectedly")
+                log.error("Camera stream closed unexpectedly")
                 break
             frame.shape = (self.h, self.w)
 
@@ -165,10 +175,10 @@ class CaptureSession:
         self.shutdown()
 
         elapsed_seconds = float(self.frames[-1]) / 1e6 if self.frames else 1.0
-        print(
-            "[RESULTS] "
-            + f"{round(self.n_frames / elapsed_seconds, 2)} FPS (PTS) and "
-            + f"{round(self.n_frames / (end_time - start_time), 2)} FPS (time lib)"
+        log.info(
+            "[RESULTS] %.2f FPS (PTS) and %.2f FPS (time lib)",
+            self.n_frames / elapsed_seconds,
+            self.n_frames / (end_time - start_time),
         )
 
     def plot_fps_timeline(self):
@@ -176,7 +186,7 @@ class CaptureSession:
         Generate and save a plot showing actual frame intervals (useful for debugging).
         """
         if len(self.frames) < 2:
-            print("[WARN] Not enough frames for FPS plotting.")
+            log.warning("Not enough frames for FPS plotting.")
             return
 
         timestamps = np.array(self.frames).astype(float) / 1e6
@@ -194,7 +204,7 @@ class CaptureSession:
         plt.ylabel("Period to previous picture (s)")
         plt.title(f"FPS period at {self.h}p, {self.args.fps}FPS")
         plt.savefig(f"{self.h}p{self.args.fps}FPS.png", dpi=300, bbox_inches="tight")
-        print(f"[INFO] FPS plot saved to {self.h}p{self.args.fps}FPS.png")
+        log.info("FPS plot saved to %sp%FPS.png", self.h, self.args.fps)
 
 
 def main():

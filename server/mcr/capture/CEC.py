@@ -77,7 +77,7 @@ class CEC(CaptureProcess):
         self.L_real_BC = 20.0
         self.L_real_CA = 25.0
         self.tolerance = 0.25
-        
+
         self.expected_ratios = {
             ("AB", "BC"): self.L_real_AB / self.L_real_BC,
             ("BC", "AB"): self.L_real_BC / self.L_real_AB,
@@ -157,7 +157,7 @@ class CEC(CaptureProcess):
         log.debug(f"[CAM{idx}] Filtered coord count: {coord.shape[0]}")
         # Now pick up to 3 well-separated blobs
         coord = coord[:3]
-        
+
         a, b, timestamp, img_number = (
             message[-4],
             message[-3],
@@ -169,7 +169,9 @@ class CEC(CaptureProcess):
             coord, a, b, self.cameraMat[idx], self.distCoef[idx]
         )
         if und_coord.shape != (3, 2):
-            log.warning(f"[CAM{idx}] Skipping frame due to invalid blob count: {und_coord.shape}")
+            log.warning(
+                f"[CAM{idx}] Skipping frame due to invalid blob count: {und_coord.shape}"
+            )
             cam_state.missed_frames += 1
             cam_state.invalid_frames += 1
             return
@@ -277,9 +279,13 @@ class CEC(CaptureProcess):
                     f"AB/BC={actual_ratio_ab_bc:.3f} (target: {self.expected_ratios[('AB', 'BC')]:.3f}), "
                     f"BC/AB={actual_ratio_bc_ab:.3f} (target: {self.expected_ratios[('BC', 'AB')]:.3f})"
                 )
-                
+
                 # Check if the ratios are within the expected tolerance
-                if abs(actual_ratio_ab_bc - self.expected_ratios[("AB", "BC")]) < self.tolerance and ab_norm > 20:
+                if (
+                    abs(actual_ratio_ab_bc - self.expected_ratios[("AB", "BC")])
+                    < self.tolerance
+                    and ab_norm > 20
+                ):
                     cam_state.swap_counter += 1
                     log.debug(
                         f"[CAM{idx}] Swap condition met — swap_counter = {cam_state.swap_counter}"
@@ -301,7 +307,11 @@ class CEC(CaptureProcess):
                             cam_state.undistorted_frames[start:end, 0:2]
                         )
 
-                if abs(actual_ratio_bc_ab - self.expected_ratios[("BC", "AB")]) < self.tolerance and bc_norm > 20:
+                if (
+                    abs(actual_ratio_bc_ab - self.expected_ratios[("BC", "AB")])
+                    < self.tolerance
+                    and bc_norm > 20
+                ):
                     cam_state.has_certainty = True
                     log.info(
                         f"[CAM{idx}] Certainty established without swap (BC/AB matched expected ratio)"
@@ -503,7 +513,9 @@ class CEC(CaptureProcess):
             for [A, B, C] in points3d_scaled.reshape([-1, 3, 3]):
                 L_reconst = np.linalg.norm(C - A)
                 tolerance_ratio = 0.10  # Allow 10% deviation
-                valid = abs(self.L_real_CA - L_reconst) / self.L_real_CA < tolerance_ratio
+                valid = (
+                    abs(self.L_real_CA - L_reconst) / self.L_real_CA < tolerance_ratio
+                )
                 if not valid:
                     i += 1
                     false_idx.extend([k, k + 1, k + 2])
@@ -521,7 +533,9 @@ class CEC(CaptureProcess):
 
                 log.info(f"Total triplets before outlier filtering: {len(points3d)//3}")
                 if len(centroids1_refined) == 0 or len(centroids2_refined) == 0:
-                    log.warning(f"No valid points left after outlier rejection for CAM{cam}-{cam+1}, skipping refinement.")
+                    log.warning(
+                        f"No valid points left after outlier rejection for CAM{cam}-{cam+1}, skipping refinement."
+                    )
                     continue
                 F, _ = estimateFundMatrix_8norm(centroids1_refined, centroids2_refined)
                 E = self.cameraMat[cam + 1].T @ F @ self.cameraMat[cam]
