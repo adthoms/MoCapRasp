@@ -286,7 +286,7 @@ def findNearestC(nearestA, nearestB):
             return i
 
 
-def orderCenterCoord(centerCoord, prevCenterCoord, otherCamOrder=0):
+def orderCenterCoord(centerCoord, prevCenterCoord, otherCamOrder=0, log=None):
     """
     Orders a set of 2D center coordinates for 3 or more markers.
 
@@ -385,6 +385,22 @@ def orderCenterCoord(centerCoord, prevCenterCoord, otherCamOrder=0):
                     sortedCenterCoord[order[2]],
                 )
             )
+
+    # Validate side ratios before returning
+    A, B, C = sortedCenterCoord
+    len_ab = np.linalg.norm(A - B)
+    len_bc = np.linalg.norm(B - C)
+    len_ac = np.linalg.norm(A - C)
+
+    # Check for extreme asymmetry or degenerate triangle
+    if (
+        any(l < 1e-2 for l in [len_ab, len_bc, len_ac])
+        or max(len_ab, len_bc, len_ac) / min(len_ab, len_bc, len_ac) > 5
+    ):
+        if log:
+            log.warning("Unusual marker geometry detected: possible misordering")
+        # Optionally: return original input or skip
+        return centerCoord, otherCamOrder
 
     return sortedCenterCoord, otherCamOrder
 

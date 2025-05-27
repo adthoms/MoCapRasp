@@ -26,6 +26,12 @@ def parse_args():
     parser.add_argument("-h", type=int, default=720, help="Image height")
     parser.add_argument("-fps", type=int, default=40, help="Frames per second")
     parser.add_argument("-md", type=int, default=4, help="Camera mode")
+    parser.add_argument(
+        "-max_frames",
+        type=int,
+        default=1000,
+        help="Maximum number of frames to capture (0 for infinite)",
+    )
 
     # Exposure/gain control
     parser.add_argument("-ag", type=int, default=2, help="Analog gain")
@@ -54,7 +60,7 @@ class CaptureSession:
         self.args = args
         self.frames = []  # Stores timestamps for FPS analysis
         self.n_frames = 0
-        self.max_frames = 500  # Number of frames to capture (can be exposed later)
+        self.max_frames = args.max_frames  # Number of frames to capture (can be exposed later)
         self.w, self.h = args.w, args.h
         self.bytes_per_frame = self.w * self.h  # Grayscale frame size
         self.led_pin = 4  # GPIO pin number used to turn on IR LED ring

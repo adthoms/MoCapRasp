@@ -51,6 +51,7 @@ def reshapeCoord(coord):
     """
     return np.asarray(coord).reshape(-1, 2).T
 
+
 def normalizePoints(pts):
     # Calculate origin centroid
     center = np.mean(pts, axis=0)

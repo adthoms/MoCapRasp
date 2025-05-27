@@ -9,6 +9,7 @@ from scipy.interpolate import CubicSpline
 from cv2 import destroyAllWindows, triangulatePoints
 
 from mcr.capture.CaptureProcess import CaptureProcess, CameraState
+from mcr.misc.math import isCollinear
 from mcr.misc.cameras import (
     estimateFundMatrix_8norm,
     decomposeEssentialMat,
@@ -19,7 +20,7 @@ from mcr.misc.plot import ArenaViewer, Frame
 
 
 warnings.filterwarnings("ignore")
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+logging.basicConfig(level=logging.DEBUG, format="[%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
 
@@ -34,9 +35,11 @@ class CalibrationResult:
     rotations: list = field(
         default_factory=lambda: [np.identity(3)]
     )  # List of relative rotation matrices between camera pairs
-    translations: list = field(default_factory=list)  # List of relative translations
+    translations: list = field(
+        default_factory=lambda: [[[0.0, 0.0, 0.0]]]
+    )  # List of relative translations
     scales: list = field(
-        default_factory=list
+        default_factory=lambda: [[1]]
     )  # List of scale factors for 3D point normalization
     fundamental_matrices: list = field(
         default_factory=list
@@ -47,6 +50,9 @@ class CalibrationResult:
     projection_matrices: list = field(
         default_factory=list
     )  # Reserved for projection matrices (optional use)
+    all_points_3d: np.ndarray = field(
+        default_factory=lambda: np.zeros((4, 0))
+    )  # Homogeneous 3D coordinates (shape: 4×N) of all triangulated points,
 
 
 class CEC(CaptureProcess):
@@ -65,14 +71,12 @@ class CEC(CaptureProcess):
         self.use_clustering = kwargs.get("use_clustering", False)
         self.camera_states = [CameraState() for _ in range(self.cameras)]
         self.calibration_result = CalibrationResult()
-        self.marker_positions = [
-            (0.0, 0.0),
-            (9.0, 0.0),
-            (0.0, 10.4),
-            # (0.0, 6.1),
-        ]
-        # self.marker_positions = kwargs.get("marker_positions", default_list_of_tuples)
-        # self.markers = len(self.marker_positions)
+
+        # Real world distances between markers (in cm)
+        self.L_real_AB = 15.0
+        self.L_real_BC = 20.0
+        self.L_real_CA = 25.0
+        self.tolerance = 0.25
 
     def collect(self) -> None:
         """
@@ -114,33 +118,17 @@ class CEC(CaptureProcess):
             return
 
         if size_msg < 13:
-            if self.verbose:
-                log.error(f"[CAM{idx}] Only {(size_msg - 4) // 3} markers were found")
+            log.error(f"[CAM{idx}] Only {(size_msg - 4) // 3} markers were found")
             cam_state.missed_frames += 1
             return
 
         msg = message[0 : size_msg - 4].reshape(-1, 3)
         coord, size = msg[:, 0:2], msg[:, 2].reshape(-1)
 
-        max_area = -1
+        # If more than 3 blobs are found, get the three biggest
         if size_msg > 13:
             order = np.argsort(size)[::-1]
-            coord_sorted = coord[order[:4]]
-            max_area, best_triplet = -1, None
-            for combo in combinations(coord_sorted, 3):
-                a, b, c = combo
-                area = 0.5 * abs(np.cross(b - a, c - a))
-                if area > max_area:
-                    max_area = area
-                    best_triplet = np.array([a, b, c])
-            coord = best_triplet
-            if self.verbose:
-                log.debug(f"[CAM{idx}] Selected blobs with area: {max_area:.2f}")
-            if max_area < 10:
-                if self.verbose:
-                    log.warning(f"[CAM{idx}] Triangle too small: area = {max_area:.2f}")
-                cam_state.missed_frames += 1
-                return
+            coord = coord[order[:3]]
 
         a, b, timestamp, img_number = (
             message[-4],
@@ -148,6 +136,7 @@ class CEC(CaptureProcess):
             message[-2],
             int(message[-1]),
         )
+
         und_coord = processCentroids(
             coord, a, b, self.cameraMat[idx], self.distCoef[idx]
         )
@@ -157,6 +146,7 @@ class CEC(CaptureProcess):
                 np.concatenate((und_coord.reshape(6), [timestamp, img_number, idx]))
             )
 
+        # Check timestamp consistency
         if cam_state.frame_counter:
             if abs(timestamp - cam_state.last_timestamp) > 1e9:
                 if self.verbose:
@@ -165,10 +155,22 @@ class CEC(CaptureProcess):
                 cam_state.invalid_frames += 1
                 return
 
+        # Check image sequence
         if img_number > cam_state.last_image_id + 1:
             cam_state.invalid_frames = img_number - cam_state.last_image_id
 
-        if not occlusion(und_coord, 5) and not np.any(und_coord < 0):
+        # Check collinearity, occlusion, and coordinate validity
+        if self.verbose:
+            log.debug(f"[CAM{idx}] np.any(undCoord<0): {np.any(und_coord < 0)}")
+            log.debug(
+                f"[CAM{idx}] isCollinear: {isCollinear(*und_coord)}, occlusion: {occlusion(und_coord, 5)}, invalid: {cam_state.invalid_frames}"
+            )
+
+        if (
+            not isCollinear(*und_coord)
+            and not occlusion(und_coord, 5)
+            and not np.any(und_coord < 0)
+        ):
             if cam_state.invalid_frames >= 10 or not cam_state.frame_counter:
                 if cam_state.has_certainty:
                     beg = cam_state.intervals[-1]
@@ -186,16 +188,23 @@ class CEC(CaptureProcess):
                 prev, cam_state.has_certainty = [], False
                 cam_state.intervals.append(cam_state.frame_counter)
             else:
-                prev = (
-                    np.array(cam_state.undistorted_frames[-1][0:6]).reshape(-1, 2)
-                    if cam_state.frame_counter > 0
-                    else np.array(cam_state.undistorted_frames[0:6]).reshape(-1, 2)
-                )
-            und_coord, _ = orderCenterCoord(und_coord, prev)
+                if cam_state.frame_counter == 0:
+                    prev = np.array(cam_state.undistorted_frames[0:6]).reshape(-1, 2)
+                else:
+                    prev = np.array(cam_state.undistorted_frames[-1][0:6]).reshape(
+                        -1, 2
+                    )
+
+            und_coord, _ = orderCenterCoord(und_coord, prev, log=log)
             und_coord = np.array(und_coord)
+
+            A, B, C = und_coord
+            log.debug(
+                f"[CAM{idx}] Marker distances AB={np.linalg.norm(A-B):.2f}, BC={np.linalg.norm(B-C):.2f}, CA={np.linalg.norm(A-C):.2f}"
+            )
         else:
             if self.verbose:
-                log.warning(f"[CAM{idx}] Occluded or invalid coordinates")
+                log.warning(f"[CAM{idx}] Not collinear or occluded coordinates")
             cam_state.missed_frames += 1
             cam_state.invalid_frames += 1
             return
@@ -204,6 +213,7 @@ class CEC(CaptureProcess):
         cam_state.last_image_id = img_number
         cam_state.invalid_frames = 0
         current_row = np.hstack((und_coord.reshape(6), timestamp))
+
         if cam_state.frame_counter == 0:
             cam_state.undistorted_frames = np.expand_dims(current_row, axis=0)
         else:
@@ -212,20 +222,20 @@ class CEC(CaptureProcess):
             )
         cam_state.frame_counter += 1
 
+        # Check marker ordering for certainty
         if not cam_state.has_certainty:
             for [A, B, C] in und_coord.reshape([-1, 3, 2]):
-                ab, cb = np.linalg.norm(A - B), np.linalg.norm(C - B)
-                if self.verbose:
-                    log.info(
-                        f"[CAM{idx}] Ratios: AB/CB = {ab/cb:.2f}, CB/AB = {cb/ab:.2f}, AB = {ab:.2f}"
-                    )
-                if max_area > 5000 and ab > 20:
+                ab_norm = np.linalg.norm(A - B)
+                cb_norm = np.linalg.norm(C - B)
+
+                if ab_norm / cb_norm > (2 - self.tolerance) and ab_norm > 20:
                     cam_state.swap_counter += 1
-                    if cam_state.swap_counter > 1:
+                    if cam_state.swap_counter > 2:
                         cam_state.swap_counter = 0
                         cam_state.has_certainty = True
                         start = cam_state.intervals[-1]
                         end = cam_state.frame_counter
+                        # Swap A and C coordinates
                         (
                             cam_state.undistorted_frames[start:end, 0:2],
                             cam_state.undistorted_frames[start:end, 4:6],
@@ -234,7 +244,8 @@ class CEC(CaptureProcess):
                         ), np.copy(
                             cam_state.undistorted_frames[start:end, 0:2]
                         )
-                if cb / ab > (2 - 0.5) and cb > 20:
+
+                if cb_norm / ab_norm > (2 - self.tolerance) and cb_norm > 20:
                     cam_state.has_certainty = True
 
     def _finalize_and_calibrate(self, saved_data_rows) -> None:
@@ -256,10 +267,8 @@ class CEC(CaptureProcess):
                 path + f"CEC-{HMS}.csv", np.array(saved_data_rows), delimiter=","
             )
 
+        # Get last intervals
         for idx, state in enumerate(self.camera_states):
-            log.info(
-                f"Camera {idx}: certainty={state.has_certainty}, intervals={len(state.time_intervals)}"
-            )
             if len(state.undistorted_frames) == 0:
                 continue
             if state.has_certainty:
@@ -272,20 +281,20 @@ class CEC(CaptureProcess):
                         f"[CAM{idx}] valid from {state.undistorted_frames[beg, 6] / 1e6:.2f}s to {state.undistorted_frames[end, 6] / 1e6:.2f}s"
                     )
 
-        log.info("[RESULTS] server results are")
-        for i, state in enumerate(self.camera_states):
-            log.info(
-                f"  >> camera {i}: {len(state.undistorted_frames)} valid images, address {self.ipList[i]}, missed {state.missed_frames} images"
-            )
-
         if self.verbose:
+            log.info("server results are")
             for i, state in enumerate(self.camera_states):
-                log.info(f"CAM{i} intervals: {state.time_intervals}")
+                log.info(f"CAM{i} address        : {self.ipList[i]}")
+                log.info(f"     valid images   : {len(state.undistorted_frames)}")
+                log.info(f"     invalid images : {state.invalid_frames}")
+                log.info(f"     missed images  : {state.missed_frames}")
+                log.info(f"     intervals      : {state.time_intervals}")
 
         self._compute_camera_extrinsics_from_intervals()
 
         if self.save:
             self._save_calibration_results()
+            log.info("Calibration results saved to CSV files in mcr/capture/data/")
 
     def _compute_camera_extrinsics_from_intervals(self) -> None:
         """
@@ -293,31 +302,31 @@ class CEC(CaptureProcess):
         estimates F and E, decomposes into R and t, triangulates, computes scale,
         and stores projection matrices and triangulated points.
         """
-        # Define true distances from your marker configuration
-        marker_layout = {
-            i: np.array([x, y, 0.0])  # You must populate this from config or CLI
-            for i, (x, y) in enumerate(self.marker_positions)
-        }
-
-        L_pairs = {
-            f"L_{i}{j}": np.linalg.norm(marker_layout[i] - marker_layout[j])
-            for i, j in combinations(marker_layout, 2)
-        }
-
+        log.debug(f"Beginning calibration across {self.cameras - 1} camera pairs")
         for cam in range(self.cameras - 1):
             state1, state2 = self.camera_states[cam], self.camera_states[cam + 1]
 
+            # Compute valid time intersection for interpolation
             intersections = [
                 [max(s1, s2), min(e1, e2)]
                 for s1, e1 in state1.time_intervals
                 for s2, e2 in state2.time_intervals
                 if max(s1, s2) <= min(e1, e2)
             ]
+
             if self.verbose:
                 log.info(f"Intersection of CAM{cam} and CAM{cam+1}: {intersections}")
 
+            # Create and fill interpolation dataset
             df_interp = np.zeros((self.nImages, 13))
             df_interp[:, -1] = np.arange(0, self.record, self.step)
+
+            log.debug(
+                f"[CAM{cam}-{cam+1}] Interpolation buffer created with shape {df_interp.shape}"
+            )
+            log.debug(
+                f"[CAM{cam}-{cam+1}] Interpolation completed. Non-zero rows: {np.count_nonzero(np.all(df_interp[:, 0:12] != 0, axis=1))}"
+            )
 
             for beg, end in intersections:
                 for i, state in enumerate([state1, state2]):
@@ -326,206 +335,293 @@ class CEC(CaptureProcess):
                         for j, row in enumerate(state.undistorted_frames)
                         if beg <= row[6] <= end
                     ]
-                    if len(valid) < 3:
+                    if len(valid) <= 2:
                         continue
+
                     coords = state.undistorted_frames[valid, 0:6]
                     times = state.undistorted_frames[valid, 6] / 1e6
                     t_low, t_high = math.ceil(times[0] / self.step), math.floor(
                         times[-1] / self.step
                     )
+
+                    if self.verbose:
+                        log.info(
+                            f"interpolated #{i + cam} from {t_low * self.step:.2f}s to {t_high * self.step:.2f}s"
+                        )
+
                     t_new = np.linspace(
                         t_low, t_high, int(t_high - t_low) + 1, dtype=np.uint16
                     )
                     interp = CubicSpline(times, coords, axis=0)
                     df_interp[t_new, i * 6 : i * 6 + 6] = interp(t_new * self.step)
 
+            # Remove rows with zeros
             df_interp = df_interp[np.all(df_interp[:, 0:12] != 0, axis=1)]
-            if len(df_interp) == 0:
-                log.error(f"[ERROR] No valid overlap between cameras {cam} and {cam+1}")
+            if len(df_interp) < 10:
+                log.error(f"No valid overlap between cameras {cam} and {cam+1}")
                 continue
 
-            c1, c2 = df_interp[:, 0:6].reshape(-1, 2), df_interp[:, 6:12].reshape(-1, 2)
-            F, _ = estimateFundMatrix_8norm(c1, c2, verbose=self.verbose)
-            if np.any(np.isnan(F)) or np.linalg.matrix_rank(F) < 2:
-                log.error(f"[ERROR] Invalid F matrix for CAM{cam}-{cam+1}")
-                continue
-
-            E = self.cameraMat[cam + 1].T @ F @ self.cameraMat[cam]
-            if np.any(np.isnan(E)) or np.linalg.matrix_rank(E) < 2:
-                log.error(f"[ERROR] Invalid E matrix for CAM{cam}-{cam+1}")
-                continue
-
-            R, t = decomposeEssentialMat(
-                E,
-                self.cameraMat[cam],
-                self.cameraMat[cam + 1],
-                c1,
-                c2,
-                cv2_compute=True,
+            centroids1, centroids2 = df_interp[:, 0:6].reshape(-1, 2), df_interp[
+                :, 6:12
+            ].reshape(-1, 2)
+            log.warning(
+                f"Interpolated {df_interp.shape[0]} images between cameras {cam} and {cam+1}"
             )
-            if (
-                np.any(np.isnan(R))
-                or np.linalg.matrix_rank(R) < 3
-                or np.linalg.norm(t) == 0
-            ):
-                log.error(f"[ERROR] Invalid R or t for CAM{cam}-{cam+1}")
-                continue
 
-            P1 = np.hstack((self.cameraMat[cam], np.zeros((3, 1))))
-            P2 = self.cameraMat[cam + 1] @ np.hstack((R, t.reshape(3, 1)))
-            points4d = triangulatePoints(
-                P1,
-                P2,
-                projectionPoints(c1),
-                projectionPoints(c2),
+            # Get fundamental and essential matrices
+            log.info(
+                f"Computing fundamental and essential matrix between cameras {cam}-{cam+1}"
             )
-            points3d = (points4d[:3] / points4d[3]).T
-            if np.mean(points3d[:, 2]) < 0:
-                points3d = -points3d
+            try:
+                F, _ = estimateFundMatrix_8norm(
+                    centroids1, centroids2, verbose=self.verbose
+                )
+                E = self.cameraMat[cam + 1].T @ F @ self.cameraMat[cam]
 
-            log.info(f"Triangulated 3D points shape: {points3d.shape}")
-            log.info(f"Sample triangulated points (first 3):\n{points3d[:3]}")
+                # Decompose to rotation and translation
+                R, t = decomposeEssentialMat(
+                    E,
+                    self.cameraMat[cam],
+                    self.cameraMat[cam + 1],
+                    centroids1,
+                    centroids2,
+                    cv2_compute=False,
+                    log=log,
+                )
 
-            # Compute scale
-            ratios = []
-            for A, B, C in points3d.reshape(-1, 3, 3):
-                try:
-                    d_ac = np.linalg.norm(A - C)
-                    d_ab = np.linalg.norm(A - B)
-                    d_bc = np.linalg.norm(B - C)
-
-                    # Skip degenerate cases to avoid division by zero
-                    if d_ac < 1e-6 or d_ab < 1e-6 or d_bc < 1e-6:
-                        continue
-
-                    ratios.extend(
-                        [
-                            L_AC / d_ac,
-                            L_AB / d_ab,
-                            L_BC / d_bc,
-                        ]
-                    )
-                except Exception as e:
-                    log.warning(f"Skipping a triplet due to error: {e}")
+                if np.any(np.isnan(R)):
+                    log.error(f"Invalid R matrix for CAM{cam}-{cam+1}")
                     continue
 
-            if len(ratios) == 0:
-                log.error("No valid scale ratios found. Cannot compute lamb.")
-                lamb = 1.0  # fallback value
-            else:
-                lamb = np.median(ratios)
+                if self.verbose:
+                    log.info("Rotation    Matrix\n%s", R.round(4))
+                    log.info("Translation Matrix\n%s", t.round(4))
 
-            log.info(f"Computed scale lamb: {lamb:.2f}")
+            except Exception as e:
+                log.error(f"Failed to compute matrices: {e}")
+                continue
+
+            # Triangulate points
+            P1 = np.hstack((self.cameraMat[cam], np.zeros((3, 1))))
+            P2 = self.cameraMat[cam + 1] @ np.hstack((R, t.T))
+            proj_pt1, proj_pt2 = projectionPoints(centroids1), projectionPoints(
+                centroids2
+            )
+            points4d = triangulatePoints(
+                P1.astype(float),
+                P2.astype(float),
+                proj_pt1.astype(float),
+                proj_pt2.astype(float),
+            )
+            points3d = (points4d[:3] / points4d[3]).T
+
+            if points3d[0, 2] < 0:
+                points3d = -points3d
+
+            # Compute scale using real distances
+            total_scale, k, false_idx = 0, 0, []
+            L_CA_vec, L_BC_vec, L_AB_vec = [], [], []
+
+            for [A, B, C] in points3d.reshape([-1, 3, 3]):
+                L_rec_CA = np.linalg.norm(C - A)
+                L_rec_BC = np.linalg.norm(B - C)
+                L_rec_AB = np.linalg.norm(A - B)
+                total_scale += (
+                    self.L_real_CA / L_rec_CA
+                    + self.L_real_BC / L_rec_BC
+                    + self.L_real_AB / L_rec_AB
+                )
+                k += 3
+                L_CA_vec.append(L_rec_CA)
+                L_BC_vec.append(L_rec_BC)
+                L_AB_vec.append(L_rec_AB)
+
+            lamb = total_scale / k
             points3d_scaled = points3d * lamb
 
-            # Consensus points
-            if self.use_clustering:
-                consensus_points = self.compute_consensus_points(
-                    points3d_scaled,
-                    n=4,
-                    eps=self.dbscan_eps,
-                    min_samples=self.dbscan_min_samples,
-                )
-                if len(consensus_points) < 4:
-                    log.warning(
-                        f"[CAM{cam}-{cam+1}] Not enough consensus points found. Using all points."
-                    )
-                    consensus_points = points3d_scaled
-                else:
-                    consensus_points = np.array(consensus_points)
-                    consensus_points = np.unique(consensus_points, axis=0)
-                    consensus_points = consensus_points[
-                        np.linalg.norm(consensus_points, axis=1) < 100
-                    ]
-                log.info(f"[CONSENSUS] Found {len(consensus_points)} stable 3D points:")
-            else:
-                log.info(
-                    f"[CAM{cam}-{cam+1}] Clustering disabled. Using all triangulated points."
-                )
-                consensus_points = points3d_scaled
-
-            self.calibration_result.rotations.append(R)
-            self.calibration_result.translations.append(t.reshape(-1).tolist())
-            self.calibration_result.scales.append(float(lamb))
-            self.calibration_result.triangulated_points.append(points3d_scaled)
+            # Find outliers
+            i, k = 0, 0
+            for [A, B, C] in points3d_scaled.reshape([-1, 3, 3]):
+                L_reconst = np.linalg.norm(C - A)
+                valid = abs(self.L_real_CA - L_reconst) / self.L_real_CA < 0.025
+                if not valid:
+                    i += 1
+                    false_idx.extend([k, k + 1, k + 2])
+                k += 3
 
             log.info(
-                f"[CAM{cam}-{cam+1}] Calibration done. Scale: {lamb:.2f}, Points: {len(points3d_scaled)}"
+                f"\tImages distant more than 1% from the real value = {i}/{int(points3d.shape[0]/3)}"
             )
 
-        if not self.calibration_result.scales:
-            log.error(
-                "No valid extrinsic calibration computed. Skipping projection matrix computation."
+            # Refine estimation by removing outliers
+            if false_idx:
+                log.info("Refining fundamental matrix estimation")
+                centroids1_refined = np.delete(centroids1, false_idx, axis=0)
+                centroids2_refined = np.delete(centroids2, false_idx, axis=0)
+
+                F, _ = estimateFundMatrix_8norm(centroids1_refined, centroids2_refined)
+                E = self.cameraMat[cam + 1].T @ F @ self.cameraMat[cam]
+                R, t = decomposeEssentialMat(
+                    E,
+                    self.cameraMat[cam],
+                    self.cameraMat[cam + 1],
+                    centroids1_refined,
+                    centroids2_refined,
+                )
+
+                if np.any(np.isnan(R)):
+                    log.error(f"Invalid refined R matrix for CAM{cam}-{cam+1}")
+                    continue
+
+                # Re-triangulate with refined matrices
+                P1 = np.hstack((self.cameraMat[cam], np.zeros((3, 1))))
+                P2 = self.cameraMat[cam + 1] @ np.hstack((R, t.T))
+                proj_pt1 = projectionPoints(centroids1_refined)
+                proj_pt2 = projectionPoints(centroids2_refined)
+                points4d = triangulatePoints(
+                    P1.astype(float),
+                    P2.astype(float),
+                    proj_pt1.astype(float),
+                    proj_pt2.astype(float),
+                )
+                points3d = (points4d[:3] / points4d[3]).T
+
+                if points3d[0, 2] < 0:
+                    points3d = -points3d
+
+                # Recompute scale and statistics
+                total_scale, k = 0, 0
+                L_CA_vec, L_BC_vec, L_AB_vec = [], [], []
+
+                for [A, B, C] in points3d.reshape([-1, 3, 3]):
+                    L_rec_CA = np.linalg.norm(C - A)
+                    L_rec_BC = np.linalg.norm(B - C)
+                    L_rec_AB = np.linalg.norm(A - B)
+                    total_scale += (
+                        self.L_real_CA / L_rec_CA
+                        + self.L_real_BC / L_rec_BC
+                        + self.L_real_AB / L_rec_AB
+                    )
+                    k += 3
+                    L_CA_vec.append(L_rec_CA)
+                    L_BC_vec.append(L_rec_BC)
+                    L_AB_vec.append(L_rec_AB)
+
+                lamb = total_scale / k
+
+            log.info(
+                f"\tScale between real world and triangulated point cloud is: {lamb:.2f}"
             )
-            return
+            log.info(
+                f"\tL_CA >> mean = {(np.mean(L_CA_vec) * lamb):.4f}cm, "
+                f"std. dev = {(np.std(L_CA_vec) * lamb):.4f}cm, "
+                f"rms = {np.sqrt(np.mean(np.square(np.array(L_CA_vec) * lamb - self.L_real_CA))):.4f}cm"
+            )
+            log.info(
+                f"\tL_AB >> mean = {(np.mean(L_AB_vec) * lamb):.4f}cm, "
+                f"std. dev = {(np.std(L_AB_vec) * lamb):.4f}cm, "
+                f"rms = {np.sqrt(np.mean(np.square(np.array(L_AB_vec) * lamb - self.L_real_AB))):.4f}cm"
+            )
+            log.info(
+                f"\tL_BC >> mean = {(np.mean(L_BC_vec) * lamb):.4f}cm, "
+                f"std. dev = {(np.std(L_BC_vec) * lamb):.4f}cm, "
+                f"rms = {np.sqrt(np.mean(np.square(np.array(L_BC_vec) * lamb - self.L_real_BC))):.4f}cm"
+            )
 
-        base_lambda = self.calibration_result.scales[0]
-        self.calibration_result.scales = [
-            1.0 if i == 0 else s / base_lambda
-            for i, s in enumerate(self.calibration_result.scales)
-        ]
+            # Store results
+            self.calibration_result.rotations.append(R)
+            self.calibration_result.translations.append(t)
+            self.calibration_result.scales.append([lamb])
+            self.calibration_result.fundamental_matrices.append(F)
+            self.calibration_result.triangulated_points.append(points3d)
 
-        # Compute projection matrices
+        # Compute projection matrices and transform all points to camera 0 coordinate system
+        self._compute_projection_matrices()
+
+    def _compute_projection_matrices(self) -> None:
+        """
+        Compute projection matrices for all cameras relative to camera 0
+        and transform all triangulated points to the same coordinate system.
+        """
         proj_matrices, all_points_3d = [], []
-        for cam in range(self.cameras):
-            P_cam = np.eye(4)
-            for i in reversed(range(cam)):
-                R = self.calibration_result.rotations[i]
-                t = np.array(self.calibration_result.translations[i]).reshape(1, 3)
-                lamb = self.calibration_result.scales[i]
-                # t_adj = (-t @ R).reshape(-1, 1) * lamb / 100
-                # T = np.vstack((np.hstack((R.T, t_adj)), [0, 0, 0, 1]))
-                T = np.eye(4)
-                T[:3, :3] = R.T
-                T[:3, 3] = -R.T @ (t.flatten() * lamb / 100)
-                P_cam = T @ P_cam
-            proj_matrices.append(P_cam)
 
+        for cam in range(self.cameras):
+            # Initialize projection matrix as identity
+            P_new = np.vstack(
+                (
+                    np.hstack((np.identity(3), np.zeros((3, 1)))),
+                    np.hstack((np.zeros(3), 1)),
+                )
+            )
+
+            # Chain transformations from current camera back to camera 0
+            for i in reversed(range(cam)):
+                if i < len(self.calibration_result.translations):
+                    t = np.array(self.calibration_result.translations[i][0]).reshape(
+                        -1, 3
+                    )
+                    R = np.array(self.calibration_result.rotations[i])
+                    lamb = self.calibration_result.scales[i][0]
+                    t_new = np.matmul(-t, R).reshape(-1, 3) * lamb / 100
+                    P = np.vstack(
+                        (np.hstack((R.T, t_new.T)), np.hstack((np.zeros(3), 1)))
+                    )
+                    P_new = np.matmul(P, P_new)
+
+            proj_matrices.append(P_new)
+
+            # Transform triangulated points to camera 0 coordinate system
             if cam < len(self.calibration_result.triangulated_points):
-                pts3d = self.calibration_result.triangulated_points[cam]
-                lamb_next = (
-                    self.calibration_result.scales[cam + 1]
+                points3d = self.calibration_result.triangulated_points[cam]
+                scale_factor = (
+                    self.calibration_result.scales[cam + 1][0]
                     if cam + 1 < len(self.calibration_result.scales)
                     else 1.0
                 )
-                pts_h = np.hstack(
-                    (pts3d * lamb_next / 100, np.ones((pts3d.shape[0], 1)))
+                points_homogeneous = np.hstack(
+                    (points3d * scale_factor / 100, np.ones((points3d.shape[0], 1)))
                 ).T
-                transformed = (P_cam @ pts_h).T
-                all_points_3d.append(transformed)
+                transformed_points = np.matmul(P_new, points_homogeneous)
+                all_points_3d.append(transformed_points)
 
         self.calibration_result.projection_matrices = proj_matrices
         self.calibration_result.all_points_3d = (
-            np.vstack(all_points_3d).T if all_points_3d else np.zeros((4, 0))
+            np.hstack(all_points_3d) if all_points_3d else np.zeros((4, 0))
         )
-
-        for i, P in enumerate(self.calibration_result.projection_matrices):
-            pos = (P @ np.array([[0], [0], [0], [1]])).ravel()[:3]
-            log.info(f"Camera {i} world position: {pos}")
 
     def _save_calibration_results(self) -> None:
-
+        """
+        Save calibration results to CSV files and display interactive 3D plot.
+        """
         result = self.calibration_result
-        np.savetxt("mcr/capture/data/R.csv", np.ravel(result.rotations), delimiter=",")
+
+        # Save matrices to CSV files
         np.savetxt(
-            "mcr/capture/data/t.csv", np.ravel(result.translations), delimiter=","
+            "mcr/capture/data/R.csv", np.array(result.rotations).ravel(), delimiter=","
         )
-        np.savetxt("mcr/capture/data/lamb.csv", np.ravel(result.scales), delimiter=",")
+        np.savetxt(
+            "mcr/capture/data/t.csv",
+            np.array(result.translations).ravel(),
+            delimiter=",",
+        )
+        np.savetxt(
+            "mcr/capture/data/lamb.csv", np.array(result.scales).ravel(), delimiter=","
+        )
         np.savetxt(
             "mcr/capture/data/F.csv",
-            np.ravel(result.fundamental_matrices),
+            np.array(result.fundamental_matrices).ravel(),
             delimiter=",",
         )
         np.savetxt(
             "mcr/capture/data/projMat.csv",
-            np.ravel(result.projection_matrices),
+            np.array(result.projection_matrices).ravel(),
             delimiter=",",
         )
 
         all_points = result.all_points_3d
 
         # Start interactive ArenaViewer
-        viewer = ArenaViewer(title="Camera Calibration Results", arenaSize=2)
+        viewer = ArenaViewer(title="3D Map of the Calibration Process", arenaSize=2)
 
         # Add cameras as frames
         for i, P in enumerate(result.projection_matrices):
@@ -544,36 +640,11 @@ class CEC(CaptureProcess):
 
         viewer.figure.show()
 
-    def compute_consensus_points(self, points3d, n=4, eps=0.01, min_samples=10):
-        """
-        Cluster 3D points and return centroids of the n most populated clusters.
-        """
-        from sklearn.cluster import DBSCAN
-        from collections import Counter
-
-        if points3d.shape[0] < min_samples:
-            log.warning("Not enough points for DBSCAN clustering.")
-            return points3d
-
-        clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(points3d)
-        labels = clustering.labels_
-        label_counts = Counter(labels[labels != -1])  # ignore noise
-
-        if not label_counts:
-            log.warning("No clusters found by DBSCAN.")
-            return points3d
-
-        top_labels = [label for label, _ in label_counts.most_common(n)]
-
-        consensus_points = []
-        for label in top_labels:
-            pts = points3d[labels == label]
-            if pts.size == 0:
-                continue
-            centroid = np.mean(pts, axis=0)
-            consensus_points.append(centroid)
-
-        return np.array(consensus_points)
-
     def get_results(self) -> CalibrationResult:
+        """
+        Return the calibration results.
+
+        Returns:
+            CalibrationResult: Complete calibration data including matrices and points
+        """
         return self.calibration_result

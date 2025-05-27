@@ -1,11 +1,8 @@
 import numpy as np
-import logging
 from cv2.fisheye import undistortPoints
 
 from mcr.misc.math import normalizePoints, singularValueDecomposition
 
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
-log = logging.getLogger(__name__)
 # LINEAR CAMERA MODEL
 
 
@@ -100,21 +97,40 @@ def estimateFundMatrix_8norm(pts1, pts2, verbose=True):
         return 0, False
 
 
-def decomposeEssentialMat(E, K1, K2, pts1, pts2, cv2_compute=False):
+def decomposeEssentialMat(E, K1, K2, pts1, pts2, cv2_compute=False, log=None):
+    if log:
+        log.info("Using custom essential matrix decomposition")
+        log.debug(f"E shape: {E.shape}, E:\n{E}")
+        log.debug(f"pts1 shape: {pts1.shape}, pts2 shape: {pts2.shape}")
+        log.debug(f"K1:\n{K1}\nK2:\n{K2}")
+
     if cv2_compute:
         import cv2
 
         retval, R, t, _ = cv2.recoverPose(E, pts1, pts2, K1)
         if retval < len(pts1) * 0.5:
-            log.warning(f"recoverPose returned low inliers: {retval}/{len(pts1)}")
+            if log:
+                log.warning(f"recoverPose returned low inliers: {retval}/{len(pts1)}")
             return np.NaN, np.NaN
+        if log:
+            log.info("cv2.recoverPose successful")
+            log.debug(f"R:\n{R}\nt:\n{t}")
         return R, t
 
+    # SVD of E
     U, D, V = singularValueDecomposition(E)
+    if log:
+        log.debug(f"SVD of E: U shape={U.shape}, D={D}, V shape={V.shape}")
+
+    # Enforce equal singular values
     e = (D[0][0] + D[1][1]) / 2
     D = np.diag([e, e, 0])
     E_aux = np.matmul(np.matmul(U, D), V.T)
     U, _, V = singularValueDecomposition(E_aux)
+    if log:
+        log.debug("Reconstructed E with equal singular values")
+
+    # Generate W and Z matrices
     W = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
     Z = [[0, 1, 0], [-1, 0, 0], [0, 0, 0]]
     R1 = np.matmul(np.matmul(U, W), V.T)
@@ -122,14 +138,21 @@ def decomposeEssentialMat(E, K1, K2, pts1, pts2, cv2_compute=False):
 
     if np.linalg.det(R1) < 0:
         R1 = -R1
+        if log:
+            log.debug("Negated R1 to ensure det(R1) > 0")
     if np.linalg.det(R2) < 0:
         R2 = -R2
+        if log:
+            log.debug("Negated R2 to ensure det(R2) > 0")
 
     Tx = np.matmul(np.matmul(U, Z), U.T)
     t = np.array([Tx[2][1], Tx[0][2], Tx[1, 0]])
 
     Rs = np.concatenate((R1, R1, R2, R2)).reshape(-1, 3, 3)
     Ts = np.concatenate((t, -t, t, -t)).reshape(-1, 1, 3)
+
+    if log:
+        log.debug(f"Testing {Rs.shape[0]} rotation-translation pairs")
 
     numNegatives = np.zeros((Ts.shape[0], 1))
     numPoints = pts1.shape[0]
@@ -157,14 +180,28 @@ def decomposeEssentialMat(E, K1, K2, pts1, pts2, cv2_compute=False):
         m2 = np.add(np.matmul(m1, Rs[i].T), np.tile(Ts[i], (numPoints, 1)))
         numNegatives[i] = np.sum((m1[:, 2] < 0) | (m2[:, 2] < 0))
 
+        if log:
+            log.debug(f"Configuration {i}: {int(numNegatives[i])} points behind camera")
+
     idx = numNegatives.argmin()
 
     R = Rs[idx]
 
     t = Ts[idx]
     if numNegatives.min() > 0:
-        print("[ERROR] no valid rotation matrix")
+        if log:
+            log.error(
+                "All triangulated points behind camera — no valid rotation matrix found"
+            )
         return np.NaN, np.NaN
+
+    if log:
+        log.info(f"Selected solution index: {idx}")
+        log.debug(f"Final R:\n{R.round(4)}")
+        log.debug(f"Final t:\n{t.round(4)}")
+        log.info(
+            f"Triangulated points with negative Z: {int(numNegatives[idx])}/{numPoints}"
+        )
 
     return R, t
 
