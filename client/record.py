@@ -27,7 +27,7 @@ def parse_args():
     parser.add_argument("-fps", type=int, default=40, help="Frames per second")
     parser.add_argument("-md", type=int, default=4, help="Camera mode")
     parser.add_argument(
-        "-max_frames",
+        "--max_frames",
         type=int,
         default=1000,
         help="Maximum number of frames to capture (0 for infinite)",
