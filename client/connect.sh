@@ -1,1 +1,2 @@
-sudo ptpd -s -i eth0 -E 
+sudo pkill ptpd
+sudo ptpd -g -s -i eth0 --statistics-file /tmp/ptpd-stats.txt
