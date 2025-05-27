@@ -1,4 +1,5 @@
 import numpy as np
+from itertools import permutations
 from cv2.fisheye import undistortPoints
 
 from mcr.misc.math import normalizePoints, singularValueDecomposition
@@ -185,15 +186,23 @@ def decomposeEssentialMat(E, K1, K2, pts1, pts2, cv2_compute=False, log=None):
 
     idx = numNegatives.argmin()
 
-    R = Rs[idx]
+    # R = Rs[idx]
+    # t = Ts[idx]
+    
+    valid_threshold = 0.25  # require at least 25% points to be in front
+    min_negatives = numNegatives.min()
+    min_index = numNegatives.argmin()
+    valid_ratio = 1.0 - (min_negatives / numPoints)
 
-    t = Ts[idx]
-    if numNegatives.min() > 0:
+    if valid_ratio < valid_threshold:
         if log:
             log.error(
-                "All triangulated points behind camera — no valid rotation matrix found"
+                f"No valid decomposition found: only {valid_ratio*100:.1f}% of points in front"
             )
         return np.NaN, np.NaN
+
+    R = Rs[min_index]
+    t = Ts[min_index]
 
     if log:
         log.info(f"Selected solution index: {idx}")

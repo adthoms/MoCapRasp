@@ -286,7 +286,46 @@ def findNearestC(nearestA, nearestB):
             return i
 
 
-def orderCenterCoord(centerCoord, prevCenterCoord, otherCamOrder=0, log=None):
+def is_right_triangle_by_ratio(A, B, C, target_ratios, tol=0.05):
+    ab = np.linalg.norm(A - B)
+    bc = np.linalg.norm(B - C)
+    ca = np.linalg.norm(C - A)
+
+    if ca < 1e-6:  # degenerate
+        return float("inf")
+
+    ab_ca = ab / ca
+    bc_ab = bc / ab
+    ca_bc = ca / bc
+
+    err = (
+        abs(ab_ca - target_ratios["ab_ca"])
+        + abs(bc_ab - target_ratios["bc_ab"])
+        + abs(ca_bc - target_ratios["ca_bc"])
+    )
+
+    return err
+
+
+def find_best_right_triangle_order_ratio(points, target_ratios, tol=0.05):
+    best_err = float("inf")
+    best_order = None
+
+    for perm in permutations(points):
+        A, B, C = perm
+        err = is_right_triangle_by_ratio(A, B, C, target_ratios, tol)
+        if err < best_err:
+            best_err = err
+            best_order = perm
+
+    if best_err < tol * 2:  # total deviation budget
+        return np.array(best_order), True
+    return np.array(points), False
+
+
+def orderCenterCoord(
+    centerCoord, prevCenterCoord, otherCamOrder=0, log=None, target_ratios=None
+):
     """
     Orders a set of 2D center coordinates for 3 or more markers.
 
@@ -386,21 +425,12 @@ def orderCenterCoord(centerCoord, prevCenterCoord, otherCamOrder=0, log=None):
                 )
             )
 
-    # Validate side ratios before returning
-    A, B, C = sortedCenterCoord
-    len_ab = np.linalg.norm(A - B)
-    len_bc = np.linalg.norm(B - C)
-    len_ac = np.linalg.norm(A - C)
-
-    # Check for extreme asymmetry or degenerate triangle
-    if (
-        any(l < 1e-2 for l in [len_ab, len_bc, len_ac])
-        or max(len_ab, len_bc, len_ac) / min(len_ab, len_bc, len_ac) > 5
-    ):
-        if log:
-            log.warning("Unusual marker geometry detected: possible misordering")
-        # Optionally: return original input or skip
-        return centerCoord, otherCamOrder
+    if target_ratios:
+        sortedCenterCoord, valid = find_best_right_triangle_order_ratio(
+            sortedCenterCoord, target_ratios
+        )
+        if not valid and log:
+            log.warning("ABC does not match ratios")
 
     return sortedCenterCoord, otherCamOrder
 

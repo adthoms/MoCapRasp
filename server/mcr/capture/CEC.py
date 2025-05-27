@@ -77,6 +77,12 @@ class CEC(CaptureProcess):
         self.L_real_BC = 20.0
         self.L_real_CA = 25.0
         self.tolerance = 0.25
+        
+        self.expected_ratios = {
+            ("AB", "BC"): self.L_real_AB / self.L_real_BC,
+            ("BC", "AB"): self.L_real_BC / self.L_real_AB,
+            ("AB", "CA"): self.L_real_AB / self.L_real_CA,
+        }
 
     def collect(self) -> None:
         """
@@ -126,10 +132,32 @@ class CEC(CaptureProcess):
         coord, size = msg[:, 0:2], msg[:, 2].reshape(-1)
 
         # If more than 3 blobs are found, get the three biggest
-        if size_msg > 13:
-            order = np.argsort(size)[::-1]
-            coord = coord[order[:3]]
+        # if size_msg > 13:
+        #     order = np.argsort(size)[::-1]
+        #     coord = coord[order[:3]]
+        from scipy.spatial.distance import pdist, squareform
 
+        def remove_close_points(points, min_dist=10.0):
+            if len(points) < 2:
+                return points
+            dist_matrix = squareform(pdist(points))
+            np.fill_diagonal(dist_matrix, np.inf)
+            keep = np.ones(len(points), dtype=bool)
+            for i in range(len(points)):
+                if not keep[i]:
+                    continue
+                close = np.where(dist_matrix[i] < min_dist)[0]
+                keep[close] = False
+                keep[i] = True
+            return points[keep]
+
+        # Filter out blobs that are too close to each other
+        print(f"[CAM{idx}] Initial coords: {coord}")
+        coord = remove_close_points(coord, min_dist=15.0)
+        log.debug(f"[CAM{idx}] Filtered coord count: {coord.shape[0]}")
+        # Now pick up to 3 well-separated blobs
+        coord = coord[:3]
+        
         a, b, timestamp, img_number = (
             message[-4],
             message[-3],
@@ -140,6 +168,11 @@ class CEC(CaptureProcess):
         und_coord = processCentroids(
             coord, a, b, self.cameraMat[idx], self.distCoef[idx]
         )
+        if und_coord.shape != (3, 2):
+            log.warning(f"[CAM{idx}] Skipping frame due to invalid blob count: {und_coord.shape}")
+            cam_state.missed_frames += 1
+            cam_state.invalid_frames += 1
+            return
 
         if self.save:
             saved_data_rows.append(
@@ -161,6 +194,7 @@ class CEC(CaptureProcess):
 
         # Check collinearity, occlusion, and coordinate validity
         if self.verbose:
+            log.debug(f"[CAM{idx}] undistorted coordinates: {und_coord}")
             log.debug(f"[CAM{idx}] np.any(undCoord<0): {np.any(und_coord < 0)}")
             log.debug(
                 f"[CAM{idx}] isCollinear: {isCollinear(*und_coord)}, occlusion: {occlusion(und_coord, 5)}, invalid: {cam_state.invalid_frames}"
@@ -195,7 +229,14 @@ class CEC(CaptureProcess):
                         -1, 2
                     )
 
-            und_coord, _ = orderCenterCoord(und_coord, prev, log=log)
+            target_ratios = {
+                "ab_ca": self.L_real_AB / self.L_real_CA,
+                "bc_ab": self.L_real_BC / self.L_real_AB,
+                "ca_bc": self.L_real_CA / self.L_real_BC,
+            }
+            und_coord, _ = orderCenterCoord(
+                und_coord, prev, log=log, target_ratios=target_ratios
+            )
             und_coord = np.array(und_coord)
 
             A, B, C = und_coord
@@ -204,7 +245,7 @@ class CEC(CaptureProcess):
             )
         else:
             if self.verbose:
-                log.warning(f"[CAM{idx}] Not collinear or occluded coordinates")
+                log.warning(f"[CAM{idx}] Collinear or occluded coordinates")
             cam_state.missed_frames += 1
             cam_state.invalid_frames += 1
             return
@@ -226,16 +267,31 @@ class CEC(CaptureProcess):
         if not cam_state.has_certainty:
             for [A, B, C] in und_coord.reshape([-1, 3, 2]):
                 ab_norm = np.linalg.norm(A - B)
-                cb_norm = np.linalg.norm(C - B)
+                bc_norm = np.linalg.norm(C - B)
 
-                if ab_norm / cb_norm > (2 - self.tolerance) and ab_norm > 20:
+                actual_ratio_ab_bc = ab_norm / bc_norm if bc_norm > 1e-3 else np.inf
+                actual_ratio_bc_ab = bc_norm / ab_norm if ab_norm > 1e-3 else np.inf
+
+                log.debug(
+                    f"[CAM{idx}] AB={ab_norm:.2f}, BC={bc_norm:.2f}, "
+                    f"AB/BC={actual_ratio_ab_bc:.3f} (target: {self.expected_ratios[('AB', 'BC')]:.3f}), "
+                    f"BC/AB={actual_ratio_bc_ab:.3f} (target: {self.expected_ratios[('BC', 'AB')]:.3f})"
+                )
+                
+                # Check if the ratios are within the expected tolerance
+                if abs(actual_ratio_ab_bc - self.expected_ratios[("AB", "BC")]) < self.tolerance and ab_norm > 20:
                     cam_state.swap_counter += 1
+                    log.debug(
+                        f"[CAM{idx}] Swap condition met — swap_counter = {cam_state.swap_counter}"
+                    )
                     if cam_state.swap_counter > 2:
                         cam_state.swap_counter = 0
                         cam_state.has_certainty = True
                         start = cam_state.intervals[-1]
                         end = cam_state.frame_counter
-                        # Swap A and C coordinates
+                        log.info(
+                            f"[CAM{idx}] A-C swap performed between frames {start} and {end}"
+                        )
                         (
                             cam_state.undistorted_frames[start:end, 0:2],
                             cam_state.undistorted_frames[start:end, 4:6],
@@ -245,8 +301,11 @@ class CEC(CaptureProcess):
                             cam_state.undistorted_frames[start:end, 0:2]
                         )
 
-                if cb_norm / ab_norm > (2 - self.tolerance) and cb_norm > 20:
+                if abs(actual_ratio_bc_ab - self.expected_ratios[("BC", "AB")]) < self.tolerance and bc_norm > 20:
                     cam_state.has_certainty = True
+                    log.info(
+                        f"[CAM{idx}] Certainty established without swap (BC/AB matched expected ratio)"
+                    )
 
     def _finalize_and_calibrate(self, saved_data_rows) -> None:
         """
@@ -443,7 +502,8 @@ class CEC(CaptureProcess):
             i, k = 0, 0
             for [A, B, C] in points3d_scaled.reshape([-1, 3, 3]):
                 L_reconst = np.linalg.norm(C - A)
-                valid = abs(self.L_real_CA - L_reconst) / self.L_real_CA < 0.025
+                tolerance_ratio = 0.10  # Allow 10% deviation
+                valid = abs(self.L_real_CA - L_reconst) / self.L_real_CA < tolerance_ratio
                 if not valid:
                     i += 1
                     false_idx.extend([k, k + 1, k + 2])
@@ -459,6 +519,10 @@ class CEC(CaptureProcess):
                 centroids1_refined = np.delete(centroids1, false_idx, axis=0)
                 centroids2_refined = np.delete(centroids2, false_idx, axis=0)
 
+                log.info(f"Total triplets before outlier filtering: {len(points3d)//3}")
+                if len(centroids1_refined) == 0 or len(centroids2_refined) == 0:
+                    log.warning(f"No valid points left after outlier rejection for CAM{cam}-{cam+1}, skipping refinement.")
+                    continue
                 F, _ = estimateFundMatrix_8norm(centroids1_refined, centroids2_refined)
                 E = self.cameraMat[cam + 1].T @ F @ self.cameraMat[cam]
                 R, t = decomposeEssentialMat(
