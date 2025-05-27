@@ -3,7 +3,14 @@ from watchdog.events import FileSystemEventHandler
 import numpy as np
 import cv2, os, socket, time, argparse
 import traceback
+import logging
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+
+log = logging.getLogger(__name__)
 # -------------------------------
 # Command-line argument parsing
 # -------------------------------
@@ -65,20 +72,20 @@ hostnamePC = socket.gethostbyname("nuc.local")
 def imageProcessing():
     counter = 0
     bitsShift, constMultiplier = 4, 16
-    print("Starting image processing loop...")
+    log.info("Starting image processing loop...")
     while True:
         try:
-            print("Waiting for new image...")
+            log.debug("Waiting for new image...")
             start = time.time()
             img, ts = yield
             if img is None or img.size == 0:
-                print("[DEBUG] Empty image, skipping...")
+                log.debug("[DEBUG] Empty image, skipping...")
                 continue
 
             _, thresh = cv2.threshold(img, args.high, 255, cv2.THRESH_BINARY)
             coord = cv2.findNonZero(thresh)
             if coord is None or coord.size == 0:
-                print("[DEBUG] No bright regions found.")
+                log.debug("[DEBUG] No bright regions found.")
                 continue
 
             coord = coord.reshape(-1, 2).T
@@ -89,21 +96,21 @@ def imageProcessing():
 
             cropped = img[x1:x2, y1:y2]
             if cropped.size == 0:
-                print("[DEBUG] Cropped region empty, skipping.")
+                log.debug("[DEBUG] Cropped region empty, skipping.")
                 continue
 
             keypoints = detector.detect(cropped)
             N = len(keypoints)
             msg = np.zeros(N * 3 + 4)
-            for i in range(N):
-                msg[(i << 1) + i], msg[(i << 1) + i + 1], msg[(i << 1) + i + 2] = (
-                    keypoints[i].pt[0],
-                    keypoints[i].pt[1],
-                    keypoints[i].size,
-                )
+            for i, keypt in enumerate(keypoints):
+                x, y, size = keypt.pt[0], keypt.pt[1], keypt.size
+                msg[(i << 1) + i] = x
+                msg[(i << 1) + i + 1] = y
+                msg[(i << 1) + i + 2] = size
+                log.debug(f"[BLOB {i}] x: {x:.2f}, y: {y:.2f}, size: {size:.2f}")
             msg[-4], msg[-3], msg[-2], msg[-1] = xMin, yMin, ts, counter
 
-            print(f"[INFO] Sending {N} blobs...")
+            log.info(f"Sending {N} blobs...")
             UDPSocket.sendto(msg.tobytes(), (hostnamePC, 8888))
 
             # Visualization (optional)
@@ -134,11 +141,10 @@ def imageProcessing():
             counter += 1
 
         except GeneratorExit:
-            print("[INFO] Image processing coroutine closed.")
+            log.info("Image processing coroutine closed.")
             return
         except Exception as e:
-            print("[ERROR] Exception in image processing:")
-            traceback.print_exc()
+            log.error("Exception in image processing:", exc_info=True)
             continue
 
 
@@ -185,12 +191,12 @@ class OnMyWatch:
                 time.sleep(300)
                 UDPSocket.sendto(np.array([0.0]).tobytes(), (hostnamePC, 8888))
                 self.observer.stop()
-                print("Observer Stopped")
+                log.info("Observer Stopped")
                 break
         except:
             UDPSocket.sendto(np.array([0.0]).tobytes(), (hostnamePC, 8888))
             self.observer.stop()
-            print("Observer Interrupted")
+            log.warning("Observer Interrupted")
         self.observer.join()
 
 
@@ -202,14 +208,14 @@ if __name__ == "__main__":
     watch.run()
     if len(times):
         times = np.array(times[1:])
-        print(f"[RESULTS] Processing at {round(1 / np.mean(times), 2)} FPS")
-        print(f"[RESULTS] {len(times)} valid images")
+        log.info(f"[RESULTS] Processing at {round(1 / np.mean(times), 2)} FPS")
+        log.info(f"[RESULTS] {len(times)} valid images")
     else:
-        print("[RESULTS] No valid images captured")
+        log.warning("[RESULTS] No valid images captured")
 
-    print("Display frames with OpenCV...")
+    log.info("Display frames with OpenCV...")
     for fid, frame in enumerate(frames):
-        print(f" Displaying Frame {fid}")
+        log.info(f" Displaying Frame {fid}")
         cv2.imshow("Blobs", frame)
         cv2.waitKey(10)
 
