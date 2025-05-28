@@ -22,7 +22,7 @@ args = parser.parse_args()
 # Setup
 # -------------------------------
 logging.basicConfig(
-    level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(message)s"
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
 )
 log = logging.getLogger(__name__)
 os.system("rm -rf /dev/shm/*.bmp")
