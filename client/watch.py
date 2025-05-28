@@ -1,40 +1,39 @@
+import os, cv2, time, socket, argparse, logging, traceback
+import numpy as np
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-import numpy as np
-import cv2, os, socket, time, argparse
-import traceback
-import logging
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
-
-log = logging.getLogger(__name__)
 # -------------------------------
-# Command-line argument parsing
+# Command-line arguments
 # -------------------------------
-parser = argparse.ArgumentParser(
-    description="""Image processing client for the MoCap system at the Erobotica lab of UFCG.
-Use it with the corresponding server script.""",
-    add_help=False,
-)
+parser = argparse.ArgumentParser(description="Blob tracker for MoCap system")
+parser.add_argument("-high", type=int, default=210, help="High threshold for blobs")
+parser.add_argument("-area", type=float, default=8.0, help="Minimum area for blobs")
 parser.add_argument(
-    "-high", type=int, default=240, help="High threshold for bright blobs"
+    "--kernel", type=int, default=0, help="Morph close kernel size (0 = off)"
 )
-parser.add_argument("-area", type=float, default=2.0, help="Minimum area for blobs")
-parser.add_argument(
-    "--help",
-    action="help",
-    default=argparse.SUPPRESS,
-    help="Show this help message and exit.",
-)
+parser.add_argument("--host", type=str, default="nuc.local", help="Server hostname/IP")
+parser.add_argument("--port", type=int, default=8888, help="UDP port")
+parser.add_argument("--display", action="store_true", help="Display result frames")
+parser.add_argument("--save", action="store_true", help="Save debug output images")
 args = parser.parse_args()
 
+# -------------------------------
+# Setup
+# -------------------------------
+logging.basicConfig(
+    level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(message)s"
+)
+log = logging.getLogger(__name__)
 os.system("rm -rf /dev/shm/*.bmp")
+pid = os.getpid()
+os.system(f"sudo renice -n -19 -p {pid}")
+times, frames = [], []
+hostnamePC = socket.gethostbyname(args.host)
+UDPSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 # -------------------------------
-# Blob detector setup
+# Blob Detector
 # -------------------------------
 params = cv2.SimpleBlobDetector_Params()
 params.minThreshold = args.high
@@ -45,25 +44,10 @@ params.filterByColor = True
 params.blobColor = 255
 params.filterByArea = True
 params.minArea = args.area
-params.filterByConvexity = False
 params.filterByCircularity = False
+params.filterByConvexity = False
 params.filterByInertia = False
-
 detector = cv2.SimpleBlobDetector_create(params)
-
-# -------------------------------
-# Prioritize CPU scheduling
-# -------------------------------
-pid = os.getpid()
-os.system(f"sudo renice -n -19 -p {pid}")
-times = []
-frames = []
-
-# -------------------------------
-# UDP setup for sending data
-# -------------------------------
-UDPSocket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
-hostnamePC = socket.gethostbyname("nuc.local")
 
 
 # -------------------------------
@@ -83,6 +67,11 @@ def imageProcessing():
                 continue
 
             _, thresh = cv2.threshold(img, args.high, 255, cv2.THRESH_BINARY)
+
+            if args.kernel > 0:
+                kernel = np.ones((args.kernel, args.kernel), np.uint8)
+                thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+
             coord = cv2.findNonZero(thresh)
             if coord is None or coord.size == 0:
                 log.debug("[DEBUG] No bright regions found.")
@@ -111,13 +100,13 @@ def imageProcessing():
             msg[-4], msg[-3], msg[-2], msg[-1] = xMin, yMin, ts, counter
 
             log.info(f"Sending {N} blobs...")
-            UDPSocket.sendto(msg.tobytes(), (hostnamePC, 8888))
+            UDPSocket.sendto(msg.tobytes(), (hostnamePC, args.port))
 
-            # Visualization (optional)
+            # Visualization
             x1, x2 = max(0, xMin - 10), min(img.shape[0], xMax + 10)
             y1, y2 = max(0, yMin - 10), min(img.shape[1], yMax + 10)
-            cropped_region = img[x1:x2, y1:y2]
-            imgWithKPts = cv2.cvtColor(cropped_region, cv2.COLOR_GRAY2BGR)
+            region = img[x1:x2, y1:y2]
+            imgWithKPts = cv2.cvtColor(region, cv2.COLOR_GRAY2BGR)
 
             for keyPt in keypoints:
                 center = (
@@ -136,6 +125,13 @@ def imageProcessing():
                 )
                 cv2.circle(imgWithKPts, center, 1, (0, 0, 255), -1, shift=bitsShift)
 
+            if args.display:
+                cv2.imshow("Blobs", imgWithKPts)
+                cv2.waitKey(10)
+
+            if args.save:
+                cv2.imwrite(f"/dev/shm/debug_frame_{ts}.png", imgWithKPts)
+
             frames.append(imgWithKPts)
             times.append(time.time() - start)
             counter += 1
@@ -143,9 +139,8 @@ def imageProcessing():
         except GeneratorExit:
             log.info("Image processing coroutine closed.")
             return
-        except Exception as e:
-            log.error("Exception in image processing:", exc_info=True)
-            continue
+        except Exception:
+            log.error("Error during image processing:", exc_info=True)
 
 
 # -------------------------------
@@ -159,18 +154,17 @@ class Handler(FileSystemEventHandler):
 
     @staticmethod
     def on_any_event(event):
-        if event.is_directory:
+        if event.is_directory or event.event_type != "created":
             return
-        elif event.event_type == "created":
-            if Handler.counter:
-                name = Handler.lastImg
-                path = f"/dev/shm/{name}.bmp"
-                img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-                if img is not None:
-                    Handler.coRout.send((img, int(name)))
-                os.remove(path)
-            Handler.lastImg = event.src_path[-14:-4]
-            Handler.counter += 1
+        if Handler.counter:
+            name = Handler.lastImg
+            path = f"/dev/shm/{name}.bmp"
+            img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+            if img is not None:
+                Handler.coRout.send((img, int(name)))
+            os.remove(path)
+        Handler.lastImg = event.src_path[-14:-4]
+        Handler.counter += 1
 
 
 # -------------------------------
@@ -183,18 +177,17 @@ class OnMyWatch:
         self.observer = Observer()
 
     def run(self):
-        event_handler = Handler()
-        self.observer.schedule(event_handler, self.watchDirectory, recursive=True)
+        self.observer.schedule(Handler(), self.watchDirectory, recursive=True)
         self.observer.start()
         try:
             while True:
                 time.sleep(300)
-                UDPSocket.sendto(np.array([0.0]).tobytes(), (hostnamePC, 8888))
+                UDPSocket.sendto(np.array([0.0]).tobytes(), (hostnamePC, args.port))
                 self.observer.stop()
                 log.info("Observer Stopped")
                 break
         except:
-            UDPSocket.sendto(np.array([0.0]).tobytes(), (hostnamePC, 8888))
+            UDPSocket.sendto(np.array([0.0]).tobytes(), (hostnamePC, args.port))
             self.observer.stop()
             log.warning("Observer Interrupted")
         self.observer.join()
@@ -206,7 +199,7 @@ class OnMyWatch:
 if __name__ == "__main__":
     watch = OnMyWatch()
     watch.run()
-    if len(times):
+    if times:
         times = np.array(times[1:])
         log.info(f"[RESULTS] Processing at {round(1 / np.mean(times), 2)} FPS")
         log.info(f"[RESULTS] {len(times)} valid images")
