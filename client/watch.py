@@ -8,7 +8,7 @@ from watchdog.events import FileSystemEventHandler
 # -------------------------------
 parser = argparse.ArgumentParser(description="Blob tracker for MoCap system")
 parser.add_argument("-high", type=int, default=210, help="High threshold for blobs")
-parser.add_argument("-area", type=float, default=8.0, help="Minimum area for blobs")
+parser.add_argument("-diam", type=float, default=8.0, help="Minimum diameter for blobs")
 parser.add_argument(
     "--kernel", type=int, default=0, help="Morph close kernel size (0 = off)"
 )
@@ -43,7 +43,7 @@ params.minDistBetweenBlobs = 0
 params.filterByColor = True
 params.blobColor = 255
 params.filterByArea = True
-params.minArea = args.area
+params.minArea = np.pi * (args.diam / 2) ** 2 # Area for minimum diameter
 params.filterByCircularity = False
 params.filterByConvexity = False
 params.filterByInertia = False
