@@ -1,4 +1,5 @@
 import numpy as np
+import logging
 from itertools import permutations, combinations
 from scipy.spatial.distance import pdist
 
@@ -286,46 +287,13 @@ def findNearestC(nearestA, nearestB):
             return i
 
 
-def find_best_triangle_order_ratio(points, target_ratios, tol=0.05):
-    best_err = float("inf")
-    best_order = None
-
-    for perm in permutations(points):
-        distances = np.array(
-            [
-                np.linalg.norm(perm[0] - perm[1]),
-                np.linalg.norm(perm[1] - perm[2]),
-                np.linalg.norm(perm[2] - perm[0]),
-            ]
-        )
-        if np.any(distances < 1e-6):  # Skip degenerate triangles
-            continue
-        obtained_ratios = {
-            "ab_ca": distances[0] / distances[2],
-            "bc_ab": distances[1] / distances[0],
-            "ca_bc": distances[2] / distances[1],
-        }
-        err = (
-            abs(obtained_ratios["ab_ca"] - target_ratios["ab_ca"])
-            + abs(obtained_ratios["bc_ab"] - target_ratios["bc_ab"])
-            + abs(obtained_ratios["ca_bc"] - target_ratios["ca_bc"])
-        )
-        if err < best_err:  # if this permutation is better
-            best_err = err
-            best_order = perm
-
-    if best_err < tol * 2:  # total deviation budget
-        return np.array(best_order), True
-    return np.array(points), False
-
-
 def orderCenterCoord(
     centerCoord,
     prevCenterCoord,
     otherCamOrder=0,
     log=None,
     target_ratios=None,
-    tol=0.05,
+    tol=0.15,
 ):
     """
     Orders a set of 2D center coordinates for 3 or more markers.
@@ -343,7 +311,7 @@ def orderCenterCoord(
     - log (logging.Logger, optional): Logger for warnings.
     - target_ratios (dict, optional): Target ratios for triangle ordering.
                                       Should contain keys 'ab_ca', 'bc_ab', 'ca_bc'.
-    - tol (float, optional): Tolerance for matching ratios. Default is 0.05.
+    - tol (float, optional): Tolerance for matching ratios. Default is 0.15.
 
     Returns:
     - sortedCenterCoord (np.ndarray): The ordered 2D coordinates.
@@ -358,15 +326,45 @@ def orderCenterCoord(
     centerX, centerY = reshapeCoord(centerCoord)
 
     if target_ratios:
-        sortedCenterCoord, valid = find_best_triangle_order_ratio(
-            centerCoord, target_ratios, tol=tol
-        )
-        if not valid and log:
-            log.warning(
-                "No valid triangle order found within tolerance. Using original coordinates."
+        best_err = float("inf")
+        best_order = None
+
+        for perm in permutations(centerCoord):
+            A, B, C = perm
+            ab = np.linalg.norm(A - B)
+            bc = np.linalg.norm(B - C)
+            ca = np.linalg.norm(C - A)
+
+            obtained_ratios = {
+                "ab_ca": ab / ca,
+                "bc_ab": bc / ab,
+                "ca_bc": ca / bc,
+            }
+
+            err = (
+                abs(obtained_ratios["ab_ca"] - target_ratios["ab_ca"])
+                / target_ratios["ab_ca"]
+                + abs(obtained_ratios["bc_ab"] - target_ratios["bc_ab"])
+                / target_ratios["bc_ab"]
+                + abs(obtained_ratios["ca_bc"] - target_ratios["ca_bc"])
+                / target_ratios["ca_bc"]
             )
+
+            if err < best_err:
+                best_err = err
+                best_order = perm
+
+        if log:
+            log.debug(f"Best triangle ordering error: {best_err:.4f}")
+
+        if best_err < tol * 3:  # allow total deviation budget
+            return np.array(best_order), otherCamOrder
+        else:
+            if log:
+                log.warning(
+                    "No valid triangle ordering found, using original coordinates."
+                )
             return centerCoord, otherCamOrder
-        return sortedCenterCoord, otherCamOrder
 
     if len(prevCenterCoord) == 0:
         order, _ = getOrder(centerX, centerY)
