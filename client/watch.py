@@ -72,21 +72,27 @@ def imageProcessing():
                 kernel = np.ones((args.kernel, args.kernel), np.uint8)
                 thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
 
-            coord = cv2.findNonZero(thresh)
-            if coord is None or coord.size == 0:
-                log.debug("[DEBUG] No bright regions found.")
-                continue
+            crop_flag = False
+            if crop_flag:
+                coord = cv2.findNonZero(thresh)
+                if coord is None or coord.size == 0:
+                    log.debug("[DEBUG] No bright regions found.")
+                    continue
 
-            coord = coord.reshape(-1, 2).T
-            xMin, xMax = int(min(coord[1])), int(max(coord[1]))
-            yMin, yMax = int(min(coord[0])), int(max(coord[0]))
-            x1, x2 = max(0, xMin - 5), min(img.shape[0], xMax + 5)
-            y1, y2 = max(0, yMin - 5), min(img.shape[1], yMax + 5)
+                coord = coord.reshape(-1, 2).T
+                xMin, xMax = int(min(coord[1])), int(max(coord[1]))
+                yMin, yMax = int(min(coord[0])), int(max(coord[0]))
+                x1, x2 = max(0, xMin - 5), min(img.shape[0], xMax + 5)
+                y1, y2 = max(0, yMin - 5), min(img.shape[1], yMax + 5)
 
-            cropped = img[x1:x2, y1:y2]
-            if cropped.size == 0:
-                log.debug("[DEBUG] Cropped region empty, skipping.")
-                continue
+                cropped = img[x1:x2, y1:y2]
+                if cropped.size == 0:
+                    log.debug("[DEBUG] Cropped region empty, skipping.")
+                    continue
+            else:
+                xMin, xMax = 0, img.shape[0]
+                yMin, yMax = 0, img.shape[1]
+                cropped = img
 
             keypoints = detector.detect(cropped)
             N = len(keypoints)

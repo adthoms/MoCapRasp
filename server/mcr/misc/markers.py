@@ -286,35 +286,31 @@ def findNearestC(nearestA, nearestB):
             return i
 
 
-def is_right_triangle_by_ratio(A, B, C, target_ratios, tol=0.05):
-    ab = np.linalg.norm(A - B)
-    bc = np.linalg.norm(B - C)
-    ca = np.linalg.norm(C - A)
-
-    if ca < 1e-6:  # degenerate
-        return float("inf")
-
-    ab_ca = ab / ca
-    bc_ab = bc / ab
-    ca_bc = ca / bc
-
-    err = (
-        abs(ab_ca - target_ratios["ab_ca"])
-        + abs(bc_ab - target_ratios["bc_ab"])
-        + abs(ca_bc - target_ratios["ca_bc"])
-    )
-
-    return err
-
-
-def find_best_right_triangle_order_ratio(points, target_ratios, tol=0.05):
+def find_best_triangle_order_ratio(points, target_ratios, tol=0.05):
     best_err = float("inf")
     best_order = None
 
     for perm in permutations(points):
-        A, B, C = perm
-        err = is_right_triangle_by_ratio(A, B, C, target_ratios, tol)
-        if err < best_err:
+        distances = np.array(
+            [
+                np.linalg.norm(perm[0] - perm[1]),
+                np.linalg.norm(perm[1] - perm[2]),
+                np.linalg.norm(perm[2] - perm[0]),
+            ]
+        )
+        if np.any(distances < 1e-6):  # Skip degenerate triangles
+            continue
+        obtained_ratios = {
+            "ab_ca": distances[0] / distances[2],
+            "bc_ab": distances[1] / distances[0],
+            "ca_bc": distances[2] / distances[1],
+        }
+        err = (
+            abs(obtained_ratios["ab_ca"] - target_ratios["ab_ca"])
+            + abs(obtained_ratios["bc_ab"] - target_ratios["bc_ab"])
+            + abs(obtained_ratios["ca_bc"] - target_ratios["ca_bc"])
+        )
+        if err < best_err:  # if this permutation is better
             best_err = err
             best_order = perm
 
@@ -324,7 +320,12 @@ def find_best_right_triangle_order_ratio(points, target_ratios, tol=0.05):
 
 
 def orderCenterCoord(
-    centerCoord, prevCenterCoord, otherCamOrder=0, log=None, target_ratios=None
+    centerCoord,
+    prevCenterCoord,
+    otherCamOrder=0,
+    log=None,
+    target_ratios=None,
+    tol=0.05,
 ):
     """
     Orders a set of 2D center coordinates for 3 or more markers.
@@ -339,6 +340,10 @@ def orderCenterCoord(
                                     Empty array/list for the first frame.
     - otherCamOrder (int): A signal from another camera for initial ordering.
                            0 if this is the first camera determining the order.
+    - log (logging.Logger, optional): Logger for warnings.
+    - target_ratios (dict, optional): Target ratios for triangle ordering.
+                                      Should contain keys 'ab_ca', 'bc_ab', 'ca_bc'.
+    - tol (float, optional): Tolerance for matching ratios. Default is 0.05.
 
     Returns:
     - sortedCenterCoord (np.ndarray): The ordered 2D coordinates.
@@ -351,6 +356,17 @@ def orderCenterCoord(
     if num_markers == 0:
         return np.array([]).reshape(0, 2), 0
     centerX, centerY = reshapeCoord(centerCoord)
+
+    if target_ratios:
+        sortedCenterCoord, valid = find_best_triangle_order_ratio(
+            centerCoord, target_ratios, tol=tol
+        )
+        if not valid and log:
+            log.warning(
+                "No valid triangle order found within tolerance. Using original coordinates."
+            )
+            return centerCoord, otherCamOrder
+        return sortedCenterCoord, otherCamOrder
 
     if len(prevCenterCoord) == 0:
         order, _ = getOrder(centerX, centerY)
@@ -424,13 +440,6 @@ def orderCenterCoord(
                     sortedCenterCoord[order[2]],
                 )
             )
-
-    if target_ratios:
-        sortedCenterCoord, valid = find_best_right_triangle_order_ratio(
-            sortedCenterCoord, target_ratios
-        )
-        if not valid and log:
-            log.warning("ABC does not match ratios")
 
     return sortedCenterCoord, otherCamOrder
 

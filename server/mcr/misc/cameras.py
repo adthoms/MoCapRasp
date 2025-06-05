@@ -100,28 +100,35 @@ def estimateFundMatrix_8norm(pts1, pts2, verbose=True):
 
 def decomposeEssentialMat(E, K1, K2, pts1, pts2, cv2_compute=False, log=None):
     if log:
-        log.info("Using custom essential matrix decomposition")
-        log.debug(f"E shape: {E.shape}, E:\n{E}")
-        log.debug(f"pts1 shape: {pts1.shape}, pts2 shape: {pts2.shape}")
-        log.debug(f"K1:\n{K1}\nK2:\n{K2}")
+        log.info("  Using custom essential matrix decomposition")
+        log.debug("")
+        log.debug(f"  E:\n{E}")
+        log.debug(f"  K1:\n{K1}")
+        log.debug(f"  K2:\n{K2}")
+        log.debug(f"  pts1 shape: {pts1.shape}, pts2 shape: {pts2.shape}")
+        log.debug("")
 
     if cv2_compute:
         import cv2
 
         retval, R, t, _ = cv2.recoverPose(E, pts1, pts2, K1)
-        if retval < len(pts1) * 0.5:
+        if retval < len(pts1) * 0.25:
             if log:
                 log.warning(f"recoverPose returned low inliers: {retval}/{len(pts1)}")
             return np.NaN, np.NaN
         if log:
             log.info("cv2.recoverPose successful")
             log.debug(f"R:\n{R}\nt:\n{t}")
-        return R, t
+        return R, t.reshape(1, 3)
 
     # SVD of E
     U, D, V = singularValueDecomposition(E)
     if log:
-        log.debug(f"SVD of E: U shape={U.shape}, D={D}, V shape={V.shape}")
+        log.debug(f"  SVD of E: U shape = {U.shape}")
+        log.debug(f"            V shape = {V.shape}")
+        log.debug(
+            f"            diag(D) = {[np.round(D[i, i], 5) for i in range(min(D.shape))]}"
+        )
 
     # Enforce equal singular values
     e = (D[0][0] + D[1][1]) / 2
@@ -129,7 +136,7 @@ def decomposeEssentialMat(E, K1, K2, pts1, pts2, cv2_compute=False, log=None):
     E_aux = np.matmul(np.matmul(U, D), V.T)
     U, _, V = singularValueDecomposition(E_aux)
     if log:
-        log.debug("Reconstructed E with equal singular values")
+        log.debug("  Reconstructed E with equal singular values")
 
     # Generate W and Z matrices
     W = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
@@ -182,14 +189,16 @@ def decomposeEssentialMat(E, K1, K2, pts1, pts2, cv2_compute=False, log=None):
         numNegatives[i] = np.sum((m1[:, 2] < 0) | (m2[:, 2] < 0))
 
         if log:
-            log.debug(f"Configuration {i}: {int(numNegatives[i])} points behind camera")
+            log.debug(
+                f"  Configuration {i}: {int(numNegatives[i])} points behind camera"
+            )
 
     idx = numNegatives.argmin()
 
     # R = Rs[idx]
     # t = Ts[idx]
 
-    valid_threshold = 0.25  # require at least 25% points to be in front
+    valid_threshold = 0.20  # require at least 25% points to be in front
     min_negatives = numNegatives.min()
     min_index = numNegatives.argmin()
     valid_ratio = 1.0 - (min_negatives / numPoints)
