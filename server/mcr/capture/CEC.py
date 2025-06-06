@@ -73,15 +73,16 @@ class CEC(CaptureProcess):
         self.calibration_result = CalibrationResult()
 
         # Real world distances between markers (in cm)
-        self.L_real_AB = 15.0
-        self.L_real_BC = 20.0
-        self.L_real_CA = 25.0
+        self.L_real_AB = 15.00  # Distance between markers A and B
+        self.L_real_BC = 20.00  # Distance between markers B and C
+        self.L_real_CA = 25.00  # Distance between markers C and A
         self.tolerance = 0.10
 
         self.expected_ratios = {
             ("AB", "BC"): self.L_real_AB / self.L_real_BC,
+            ("BC", "CA"): self.L_real_BC / self.L_real_CA,
+            ("CA", "AB"): self.L_real_CA / self.L_real_AB,
             ("BC", "AB"): self.L_real_BC / self.L_real_AB,
-            ("AB", "CA"): self.L_real_AB / self.L_real_CA,
         }
 
     def collect(self) -> None:
@@ -270,6 +271,12 @@ class CEC(CaptureProcess):
             log.debug(
                 f"[CAM{idx}] Marker distances AB={np.linalg.norm(A-B):.2f}, BC={np.linalg.norm(B-C):.2f}, CA={np.linalg.norm(A-C):.2f}"
             )
+            log.debug(
+                f"[CAM{idx}] Expected Ratios: AB/BC={self.expected_ratios[('AB', 'BC')]:.3f}, BC/CA={self.expected_ratios[('BC', 'CA')]:.3f}, CA/AB={self.expected_ratios[('CA', 'AB')]:.3f}"
+            )
+            log.debug(
+                f"[CAM{idx}] Obtained Ratios: AB/BC={np.linalg.norm(A-B)/np.linalg.norm(B-C):.3f}, BC/CA={np.linalg.norm(B-C)/np.linalg.norm(A-C):.3f}, CA/AB={np.linalg.norm(A-C)/np.linalg.norm(A-B):.3f}"
+            )
             log.debug("")
         else:
             if self.verbose:
@@ -408,6 +415,7 @@ class CEC(CaptureProcess):
             if not intersections:
                 continue
 
+            # Interpolate centroids for the overlapping time intervals
             centroids1, centroids2 = self._interpolate_centroids(
                 cam, state1, state2, intersections
             )
@@ -419,17 +427,34 @@ class CEC(CaptureProcess):
 
             log.info(f"Performing permutation search for camera pair {cam}-{cam+1}")
 
-            # GLOBAL PERMUTATION SEARCH INJECTION
-            best_perm, centroids1_perm, centroids2_perm = self._find_best_permutation(
-                centroids1, centroids2
-            )
+            # Find best permutation of centroids to match expected ratios
+            best_perm1 = self._find_best_permutation(cam, centroids1)
+            best_perm2 = self._find_best_permutation(cam + 1, centroids2)
 
-            # Now continue your existing calibration pipeline using centroids1_perm and centroids2_perm
-            log.info(f"Using permutation {best_perm} for cameras {cam}-{cam+1}")
+            # Apply the best permutation to centroids
+            num_frames = centroids1.shape[0] // 3
+            centroids1 = centroids1.reshape((num_frames, 3, 2))
+            centroids2 = centroids2.reshape((num_frames, 3, 2))
+
+            # Apply permutation frame-wise
+            centroids1 = centroids1[:, best_perm1, :].reshape(-1, 2)
+            centroids2 = centroids2[:, best_perm2, :].reshape(-1, 2)
 
             # Get fundamental and essential matrices
             log.info(
                 f"Computing fundamental and essential matrix between cameras {cam}-{cam+1}"
+            )
+            log.debug(
+                f"[CAM{cam}-{cam+1}] Centroids1 shape: {centroids1.shape}, Centroids2 shape: {centroids2.shape}"
+            )
+            log.debug(
+                f"       Expected Ratios: AB/BC={self.expected_ratios[('AB', 'BC')]:.3f}, BC/CA={self.expected_ratios[('BC', 'CA')]:.3f}, CA/AB={self.expected_ratios[('CA', 'AB')]:.3f}"
+            )
+            log.debug(
+                f"[CAM{cam}] Measured Ratios: AB/BC={np.linalg.norm(centroids1[0]-centroids1[1])/np.linalg.norm(centroids1[1]-centroids1[2]):.3f}, BC/CA={np.linalg.norm(centroids1[1]-centroids1[2])/np.linalg.norm(centroids1[0]-centroids1[2]):.3f}, CA/AB={np.linalg.norm(centroids1[0]-centroids1[2])/np.linalg.norm(centroids1[0]-centroids1[1]):.3f}"
+            )
+            log.debug(
+                f"[CAM{cam+1}] Measured Ratios: AB/BC={np.linalg.norm(centroids2[0]-centroids2[1])/np.linalg.norm(centroids2[1]-centroids2[2]):.3f}, BC/CA={np.linalg.norm(centroids2[1]-centroids2[2])/np.linalg.norm(centroids2[0]-centroids2[2]):.3f}, CA/AB={np.linalg.norm(centroids2[0]-centroids2[2])/np.linalg.norm(centroids2[0]-centroids2[1]):.3f}"
             )
             F, R, t = self._compute_fundamental_essential_and_pose(
                 cam, cam + 1, centroids1, centroids2
@@ -448,6 +473,7 @@ class CEC(CaptureProcess):
                 P1, P2, centroids1, centroids2
             )
 
+            # Calculate scale based on real-world distances
             real_lengths = [self.L_real_AB, self.L_real_BC, self.L_real_CA]
             lamb, L_vec = self._compute_scale(
                 points3d,
@@ -456,6 +482,7 @@ class CEC(CaptureProcess):
             )
             points3d_scaled = points3d * lamb
 
+            # Remove outliers based on distance from expected lengths
             filtered_idx, outlier_count = self._remove_distance_outliers(
                 points3d_scaled, real_lengths
             )
@@ -468,11 +495,11 @@ class CEC(CaptureProcess):
 
             log.info("Refining fundamental matrix estimation using filtered inliers")
 
-            centroids1_refined = centroids1[filtered_idx]
-            centroids2_refined = centroids2[filtered_idx]
+            centroids1 = centroids1[filtered_idx]
+            centroids2 = centroids2[filtered_idx]
 
             F, R, t = self._compute_fundamental_essential_and_pose(
-                cam, cam + 1, centroids1_refined, centroids2_refined
+                cam, cam + 1, centroids1, centroids2
             )
 
             if np.isnan(F).any() or np.isnan(R).any() or np.isnan(t).any():
@@ -485,7 +512,7 @@ class CEC(CaptureProcess):
             P1 = np.hstack((self.cameraMat[cam], np.zeros((3, 1))))
             P2 = self.cameraMat[cam + 1] @ np.hstack((R, t.T))
             points3d = self._triangulate_and_filter_outliers(
-                P1, P2, centroids1_refined, centroids2_refined
+                P1, P2, centroids1, centroids2
             )
 
             # Compute scale again with refined points
@@ -505,59 +532,65 @@ class CEC(CaptureProcess):
         # Compute projection matrices and transform all points to camera 0 coordinate system
         self._compute_projection_matrices()
 
-    def _find_best_permutation(self, centroids1, centroids2):
+    def _find_best_permutation(self, cam, centroids):
         all_perms = list(permutations([0, 1, 2]))
-        real_lengths = [self.L_real_AB, self.L_real_BC, self.L_real_CA]
-
         best_error = float("inf")
-        best_perm = (None, None)
-        best_centroids1 = centroids1
-        best_centroids2 = centroids2
+        best_perm = None
+        best_centroids = centroids
 
-        for perm1 in all_perms:
-            for perm2 in all_perms:
-                c1_perm = self._apply_permutation(centroids1, perm1)
-                c2_perm = self._apply_permutation(centroids2, perm2)
+        for perm in all_perms:
+            # Permute centroids according to the current permutation
+            centroids_perm = np.empty_like(centroids)
+            for i, idx in enumerate(perm):
+                centroids_perm[i::3, :] = centroids[idx::3, :]
 
-                # Estimate fundamental matrix to avoid degenerate pairings
-                F, _ = estimateFundMatrix_8norm(c1_perm, c2_perm)
-                if np.any(np.isnan(F)):
-                    continue
+            # Compute measured lengths for the permuted centroids
+            meas_lengths = [
+                np.linalg.norm(centroids_perm[0] - centroids_perm[1]),  # AB
+                np.linalg.norm(centroids_perm[1] - centroids_perm[2]),  # BC
+                np.linalg.norm(centroids_perm[2] - centroids_perm[0]),  # CA
+            ]
 
-                # Rough triangulation to estimate lengths
-                P1 = np.hstack((self.cameraMat[0], np.zeros((3, 1))))
-                P2 = self.cameraMat[1] @ np.hstack(
-                    (np.identity(3), np.array([[1], [0], [0]]))
-                )
-                points3d_hom = triangulatePoints(
-                    P1, P2, projectionPoints(c1_perm), projectionPoints(c2_perm)
-                )
-                points3d = (points3d_hom[:3] / points3d_hom[3]).T
+            # Compute the obtained ratios
+            meas_ratios = [
+                meas_lengths[0] / meas_lengths[1],  # AB/BC
+                meas_lengths[1] / meas_lengths[2],  # BC/CA
+                meas_lengths[2] / meas_lengths[0],  # CA/AB
+            ]
 
-                # Compute average distances
-                L_AB = np.mean(np.linalg.norm(points3d[::3] - points3d[1::3], axis=1))
-                L_BC = np.mean(np.linalg.norm(points3d[1::3] - points3d[2::3], axis=1))
-                L_CA = np.mean(np.linalg.norm(points3d[2::3] - points3d[::3], axis=1))
+            # Compute the real ratios based on real lengths
+            real_ratios = [
+                self.expected_ratios[("AB", "BC")],  # AB/BC
+                self.expected_ratios[("BC", "CA")],  # BC/CA
+                self.expected_ratios[("CA", "AB")],  # CA/AB
+            ]
 
-                total_error = (
-                    abs(L_AB - real_lengths[0])
-                    + abs(L_BC - real_lengths[1])
-                    + abs(L_CA - real_lengths[2])
-                )
+            # Calculate the total error as the sum of absolute differences
+            total_error = sum(
+                abs(meas_ratio - real_ratio)
+                for meas_ratio, real_ratio in zip(meas_ratios, real_ratios)
+            )
 
-                if total_error < best_error:
-                    best_error = total_error
-                    best_perm = (perm1, perm2)
-                    best_centroids1 = c1_perm
-                    best_centroids2 = c2_perm
+            log.debug(
+                f" Permutation {perm}: measured lengths=[{meas_lengths[0]:.2f}, {meas_lengths[1]:.2f}, {meas_lengths[2]:.2f}], "
+            )
+            log.debug(
+                f"                        measured ratios =[{meas_ratios[0]:.3f}, {meas_ratios[1]:.3f}, {meas_ratios[2]:.3f}], "
+            )
+            log.debug(
+                f"                        real ratios     =[{real_ratios[0]:.3f}, {real_ratios[1]:.3f}, {real_ratios[2]:.3f}], "
+            )
 
-        return best_perm, best_centroids1, best_centroids2
+            # Update best permutation if the error is lower
+            if total_error < best_error:
+                best_error = total_error
+                best_perm = perm
+                # best_centroids = centroids_perm
 
-    def _apply_permutation(self, centroids, perm):
-        permuted = np.empty_like(centroids)
-        for i, idx in enumerate(perm):
-            permuted[i::3, :] = centroids[idx::3, :]
-        return permuted
+        log.debug(f" Using permutation {best_perm} for cameras {cam}")
+        log.debug("")
+        return best_perm
+        # return best_centroids, best_perm
 
     def _get_valid_intersections(self, state1, state2):
         return [
@@ -791,32 +824,37 @@ class CEC(CaptureProcess):
             "L_CA": np.linalg.norm(points3d[2::3] - points3d[::3], axis=1),
         }
         log.debug(
-            f"Distances calculated: L_AB={distances['L_AB']}, L_BC={distances['L_BC']}, L_CA={distances['L_CA']}"
+            f" Calculated Distances: L_AB[0]= {distances['L_AB'][0]:.3f}, L_BC[0]= {distances['L_BC'][0]:.3f}, L_CA[0]= {distances['L_CA'][0]:.3f}"
         )
         # Calculate the mean and standard deviation for each distance
         means = {key: np.mean(val) for key, val in distances.items()}
         stds = {key: np.std(val) for key, val in distances.items()}
-        log.debug(f"Means: {means}, Stds: {stds}")
+        log.debug(
+            f" Means: {{L_AB: {means['L_AB']:.3f}, L_BC: {means['L_BC']:.3f}, L_CA: {means['L_CA']:.3f}}}"
+        )
+        log.debug(
+            f" Stds : {{L_AB: {stds['L_AB']:.3f}, L_BC: {stds['L_BC']:.3f}, L_CA: {stds['L_CA']:.3f}}}"
+        )
         # Calculate the threshold for outliers
         outlier_threshold_method = "mean-std"  # Options: "mean-std", "real"
         if outlier_threshold_method == "mean-std":
             # Use mean + 1.5 * std for outlier detection
-            log.debug("Using mean + 1.5 * std for outlier thresholds")
+            log.debug(" Using mean + 1.5 * std for outlier thresholds")
             thresholds = {
                 key: (means[key] - 1.5 * stds[key], means[key] + 1.5 * stds[key])
                 for key in distances
             }
         elif outlier_threshold_method == "real":
             # Use real-world lengths with tolerance
-            log.debug("Using real-world lengths for outlier thresholds")
+            log.debug(" Using real-world lengths for outlier thresholds")
             if not all(isinstance(length, (int, float)) for length in real_lengths):
                 raise ValueError("real_lengths must contain numeric values")
             if len(real_lengths) != 3:
                 raise ValueError("real_lengths must contain exactly three values")
-            log.debug(f"Real lengths: {real_lengths}")
+            log.debug(f" Real lengths: {real_lengths}")
             # Calculate thresholds based on real lengths and outlier tolerance
             self.outlier_tolerance = 0.40
-            log.debug(f"Using outlier tolerance: {self.outlier_tolerance}")
+            log.debug(f" Using outlier tolerance: {self.outlier_tolerance}")
             thresholds = {
                 "L_AB": (
                     real_lengths[0] * (1 - self.outlier_tolerance),
@@ -831,7 +869,12 @@ class CEC(CaptureProcess):
                     real_lengths[2] * (1 + self.outlier_tolerance),
                 ),
             }
-        log.debug(f"Thresholds: {thresholds}")
+        log.debug(
+            f"Thresholds: {{L_AB: ({thresholds['L_AB'][0]:.3f}, {thresholds['L_AB'][1]:.3f}), "
+            f"L_BC: ({thresholds['L_BC'][0]:.3f}, {thresholds['L_BC'][1]:.3f}), "
+            f"L_CA: ({thresholds['L_CA'][0]:.3f}, {thresholds['L_CA'][1]:.3f})}}"
+        )
+
         # Identify outliers based on the thresholds
         valid_indices = []
         outlier_count = 0
