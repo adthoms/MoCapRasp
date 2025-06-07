@@ -428,17 +428,8 @@ class CEC(CaptureProcess):
             log.info(f"Performing permutation search for camera pair {cam}-{cam+1}")
 
             # Find best permutation of centroids to match expected ratios
-            best_perm1 = self._find_best_permutation(cam, centroids1)
-            best_perm2 = self._find_best_permutation(cam + 1, centroids2)
-
-            # Apply the best permutation to centroids
-            num_frames = centroids1.shape[0] // 3
-            centroids1 = centroids1.reshape((num_frames, 3, 2))
-            centroids2 = centroids2.reshape((num_frames, 3, 2))
-
-            # Apply permutation frame-wise
-            centroids1 = centroids1[:, best_perm1, :].reshape(-1, 2)
-            centroids2 = centroids2[:, best_perm2, :].reshape(-1, 2)
+            centroids1 = self._find_best_permutation(cam, centroids1)
+            centroids2 = self._find_best_permutation(cam + 1, centroids2)
 
             # Get fundamental and essential matrices
             log.info(
@@ -589,8 +580,7 @@ class CEC(CaptureProcess):
 
         log.debug(f" Using permutation {best_perm} for cameras {cam}")
         log.debug("")
-        return best_perm
-        # return best_centroids, best_perm
+        return best_centroids if best_perm is not None else centroids
 
     def _get_valid_intersections(self, state1, state2):
         return [

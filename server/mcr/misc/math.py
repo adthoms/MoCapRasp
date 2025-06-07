@@ -4,11 +4,26 @@ from sklearn import linear_model
 from scipy.interpolate import CubicSpline
 from scipy.spatial.transform import Rotation
 
-# VECTOR ALGEBRA
-
 
 # Get the distance between points to lines
 def getDistance2Line(lines, pts):
+    """
+    Compute the perpendicular distance from points to lines.
+
+    Parameters
+    ----------
+    lines : array_like, shape (N, 3)
+        Each line represented as (a, b, c) for ax + by + c = 0.
+    pts : array_like, shape (M, 2)
+        2D points to compute distance from.
+
+    Returns
+    -------
+    inliers : ndarray, shape (M,)
+        Boolean array indicating which points are within threshold (hardcoded 5).
+    distances : ndarray, shape (M,)
+        Computed perpendicular distances for each point.
+    """
     pts, out, lines = np.copy(pts).reshape(-1, 2), [], np.copy(lines).reshape(-1, 3)
 
     for [a, b, c] in lines:
@@ -20,6 +35,19 @@ def getDistance2Line(lines, pts):
 
 # Find a plane that passes between three points
 def findPlane(P1, P2, P3):
+    """
+    Fit a plane through three 3D points.
+
+    Parameters
+    ----------
+    P1, P2, P3 : array_like, shape (3,)
+        3D coordinates of the points.
+
+    Returns
+    -------
+    plane : ndarray, shape (4,)
+        Plane coefficients (a, b, c, d) for ax + by + cz + d = 0.
+    """
     x1, y1, z1 = P1
     x2, y2, z2 = P2
     x3, y3, z3 = P3
@@ -32,27 +60,57 @@ def findPlane(P1, P2, P3):
 
 # Get angle between two vectors
 def getAngle(u, v):
+    """
+    Compute angle between two vectors.
+
+    Parameters
+    ----------
+    u, v : array_like
+        Input vectors.
+
+    Returns
+    -------
+    angle : float
+        Angle between vectors in radians, always in [-pi, pi].
+    """
     cosPhi = np.dot(u, v) / (np.linalg.norm(u) * np.linalg.norm(v))
     phi = np.arccos(cosPhi)
     return np.arctan2(np.sin(phi), cosPhi)
 
 
-# LINEAR ALGEBRA
-
-
 def reshapeCoord(coord):
     """
-    Reshapes a flat coordinate list or array of shape (N*2,) or (N, 2)
-    into separate X and Y arrays.
+    Reshape 1D or 2D coordinate array into separate X and Y arrays.
 
-    Returns:
-        coordX: list of X coordinates
-        coordY: list of Y coordinates
+    Parameters
+    ----------
+    coord : array_like, shape (N*2,) or (N, 2)
+        Input coordinates.
+
+    Returns
+    -------
+    coordX : ndarray
+        X-coordinates.
+    coordY : ndarray
+        Y-coordinates.
     """
     return np.asarray(coord).reshape(-1, 2).T
 
 
 def normalizePoints(pts):
+    """
+    Compute angle between two vectors.
+
+    Parameters
+    ----------
+    u, v : array_like
+        Input vectors.
+
+    Returns
+    -------
+    angle : float
+        Angle between vectors in radians, always in [-pi, pi].
+    """
     # Calculate origin centroid
     center = np.mean(pts, axis=0)
 
@@ -78,6 +136,20 @@ def normalizePoints(pts):
 
 
 def singularValueDecomposition(matrix):
+    """
+    Compute SVD and return diagonalized singular value matrix.
+
+    Parameters
+    ----------
+    matrix : ndarray, shape (M, N)
+        Matrix to decompose.
+
+    Returns
+    -------
+    U : ndarray, shape (M, M)
+    D : ndarray, shape (M, N)
+    V : ndarray, shape (N, N)
+    """
     leftSingVectors, singValues, rightSingVectorsTransposed = np.linalg.svd(matrix)
     singValuesMatrix = np.zeros((3, 3))
 
@@ -87,31 +159,24 @@ def singularValueDecomposition(matrix):
     return leftSingVectors, singValuesMatrix, rightSingVectors
 
 
-# FITTING
-
-import numpy as np
-
-
 def isCollinear(P1, P2, P3, max_ratio=0.08, min_distance=10.0):
     """
-    Determines if three 2D points are nearly collinear based on their relative geometry.
+    Determine whether three 2D points are nearly collinear.
 
-    A triangle formed by the points is considered nearly collinear if the perpendicular
-    distance from the third point to the line defined by the first two points is
-    less than a specified ratio of the maximum pairwise distance.
+    Parameters
+    ----------
+    P1, P2, P3 : array_like, shape (2,)
+        The three 2D points.
+    max_ratio : float, optional
+        Max allowed perpendicular distance ratio.
+    min_distance : float, optional
+        Minimum distance between any two points.
 
-    Parameters:
-    - P1, P2, P3: iterable of length 2 (x, y) — The 2D points to check.
-    - max_ratio: float — Maximum allowed ratio of perpendicular distance to the
-      longest distance between any two points.
-    - min_distance: float — Minimum allowed distance between any two points to avoid
-      degenerate or overly clustered configurations.
-
-    Returns:
-    - True if the points are nearly collinear according to the ratio criterion.
-    - False otherwise.
+    Returns
+    -------
+    collinear : bool
+        True if points are collinear.
     """
-
     P1, P2, P3 = np.array(P1), np.array(P2), np.array(P3)
 
     max_point_dist = np.max(
@@ -143,6 +208,25 @@ def isCollinear(P1, P2, P3, max_ratio=0.08, min_distance=10.0):
 
 # Interpolate data using cubic spline
 def interpolate(coords, timestamps, steps):
+    """
+    Perform cubic spline interpolation of coordinate data over timestamps.
+
+    Parameters
+    ----------
+    coords : array_like, shape (N, ...)
+        Coordinate values to interpolate.
+    timestamps : array_like, shape (N,)
+        Corresponding timestamps.
+    steps : int
+        Time step interval.
+
+    Returns
+    -------
+    interpolated_coords : ndarray
+        Interpolated coordinates.
+    newTimestamps : ndarray
+        New timestamps after interpolation.
+    """
     # Get data
     if not len(timestamps):
         return [], []
@@ -160,15 +244,44 @@ def interpolate(coords, timestamps, steps):
     return cubicSpline(newTimestamps * steps), newTimestamps
 
 
-# UTILITY
-
-
 def getSignal(n1, n2, tol=1e-6):
+    """
+    Determine the sign of difference between two numbers with tolerance.
+
+    Parameters
+    ----------
+    n1, n2 : float
+        The numbers to compare.
+    tol : float, optional
+        Tolerance for treating them as equal.
+
+    Returns
+    -------
+    signal : int
+        -1 if n1 < n2, +1 if n1 > n2, 0 if equal within tolerance.
+    valid : bool
+        False if numbers are considered equal, True otherwise.
+    """
     if abs(n1 - n2) <= tol:
         return 0, False
     return (-1 if (n1 - n2) < 0 else 1), True
 
 
 def swapElements(arr, idx1, idx2):
+    """
+    Swap two elements in a list or array.
+
+    Parameters
+    ----------
+    arr : list or ndarray
+        Array to modify.
+    idx1, idx2 : int
+        Indices to swap.
+
+    Returns
+    -------
+    arr : list or ndarray
+        Modified array after swapping.
+    """
     arr[idx1], arr[idx2] = arr[idx2], arr[idx1]
     return arr

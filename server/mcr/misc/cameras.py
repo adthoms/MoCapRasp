@@ -53,49 +53,49 @@ def estimateFundMatrix_8norm(pts1, pts2, verbose=True):
     # Transform to normalized points
     normPts1, t1, valid1 = normalizePoints(pts1)
     normPts2, t2, valid2 = normalizePoints(pts2)
-    if valid1 and valid2:
-        # Construct A matrix for 8-norm: Zisserman (pg. 279)
-        A = np.zeros((numPoints, 9))
-        for i in range(numPoints):
-            pt1 = normPts1[:, i]
-            pt2 = normPts2[:, i]
-            A[i] = [
-                pt1[0] * pt2[0],
-                pt1[1] * pt2[0],
-                pt2[0],
-                pt1[0] * pt2[1],
-                pt1[1] * pt2[1],
-                pt2[1],
-                pt1[0],
-                pt1[1],
-                1,
-            ]
-
-        # F is the smallest singular value of A
-        _, _, V = singularValueDecomposition(A)
-        F = V[:, -1].reshape(3, 3)
-        U, D, V = singularValueDecomposition(F)
-        D[-1, -1] = 0
-        F = np.matmul(np.matmul(U, D), V.T)
-
-        # Transform F back to the original scale
-
-        F = np.matmul(np.matmul(t2.T, F), t1)
-
-        # Normalise F
-        F = F / np.linalg.norm(F)
-        if F[-1, -1] < 0:
-            F = -F
-
-        if verbose:
-            reprojectionError(
-                F,
-                np.vstack((pts1.T, np.ones((1, pts1.shape[0])))),
-                np.vstack((pts2.T, np.ones((1, pts2.shape[0])))),
-            )
-        return F, True
-    else:
+    if not valid1 or not valid2:
         return 0, False
+
+    # Construct A matrix for 8-norm: Zisserman (pg. 279)
+    A = np.zeros((numPoints, 9))
+    for i in range(numPoints):
+        pt1 = normPts1[:, i]
+        pt2 = normPts2[:, i]
+        A[i] = [
+            pt1[0] * pt2[0],
+            pt1[1] * pt2[0],
+            pt2[0],
+            pt1[0] * pt2[1],
+            pt1[1] * pt2[1],
+            pt2[1],
+            pt1[0],
+            pt1[1],
+            1,
+        ]
+
+    # F is the smallest singular value of A
+    _, _, V = singularValueDecomposition(A)
+    F = V[:, -1].reshape(3, 3)
+    U, D, V = singularValueDecomposition(F)
+    D[-1, -1] = 0
+    F = np.matmul(np.matmul(U, D), V.T)
+
+    # Transform F back to the original scale
+
+    F = np.matmul(np.matmul(t2.T, F), t1)
+
+    # Normalise F
+    F = F / np.linalg.norm(F)
+    if F[-1, -1] < 0:
+        F = -F
+
+    if verbose:
+        reprojectionError(
+            F,
+            np.vstack((pts1.T, np.ones((1, pts1.shape[0])))),
+            np.vstack((pts2.T, np.ones((1, pts2.shape[0])))),
+        )
+    return F, True
 
 
 def decomposeEssentialMat(E, K1, K2, pts1, pts2, cv2_compute=False, log=None):
