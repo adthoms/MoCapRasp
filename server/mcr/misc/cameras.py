@@ -81,7 +81,6 @@ def estimateFundMatrix_8norm(pts1, pts2, verbose=True):
     F = np.matmul(np.matmul(U, D), V.T)
 
     # Transform F back to the original scale
-
     F = np.matmul(np.matmul(t2.T, F), t1)
 
     # Normalise F
