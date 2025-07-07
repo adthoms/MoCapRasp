@@ -2,9 +2,10 @@ import time, os
 import picamera
 
 # Output folder for calibration images
-output_dir = os.path.expanduser(f"./pics/cam{camera_number}/")
+camera_number = os.popen("hostname").read().strip()[-1]
+output_dir = os.path.expanduser(f"./pics/cam{camera_number}")
 os.makedirs(output_dir, exist_ok=True)
-os.system(f"rm -rf {output_dir}/*")  # WARNING: deletes existing files!
+os.system(f"rm -rf {output_dir}/*")
 
 print("[INFO] Capturing calibration image set")
 with picamera.PiCamera(resolution=(960, 640), framerate=20, sensor_mode=2) as camera:
