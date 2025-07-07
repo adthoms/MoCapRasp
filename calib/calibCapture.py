@@ -2,7 +2,7 @@ import time, os
 import picamera
 
 # Output folder for calibration images
-output_dir = os.path.expanduser("./pics/cam{camera_number}/")
+output_dir = os.path.expanduser(f"./pics/cam{camera_number}/")
 os.makedirs(output_dir, exist_ok=True)
 os.system(f"rm -rf {output_dir}/*")  # WARNING: deletes existing files!
 
