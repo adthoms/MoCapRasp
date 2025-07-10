@@ -2,6 +2,7 @@ import os, math
 import warnings
 import logging
 import numpy as np
+import pandas as pd
 from datetime import datetime
 from dataclasses import dataclass, field
 from scipy.interpolate import CubicSpline
@@ -85,11 +86,22 @@ class CEC(CaptureProcess):
             ("BC", "AB"): self.L_real_BC / self.L_real_AB,
         }
 
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        # Remove unpickleable attributes
+        if "server_socket" in state:
+            state["server_socket"] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        # You must call `connect()` later to restore the socket
+
     def collect(self) -> None:
         """
         Main loop to receive data packets from all cameras, process and undistort the
         detected marker blobs, track certainty, and accumulate all valid 2D points.
-        When capture is complete, invokes the calibration procedure.
+        When capture is complete, saves the raw data to CSV.
         """
         log.info("Starting capture for Camera Extrinsics Calibration")
         saved_data_rows = []
@@ -105,11 +117,47 @@ class CEC(CaptureProcess):
                 )
         finally:
             self._finalize_capture_session(saved_data_rows)
-            self._compute_camera_extrinsics()
+            log.info("Saved raw 2D capture data. Calibration not performed in --collect mode.")
+            # self._compute_camera_extrinsics()
 
-            if self.save:
-                self._save_calibration_results()
-                log.info("Calibration results saved to CSV files in mcr/capture/data/")
+            # if self.save:
+            #     self._save_calibration_results()
+            #     log.info("Calibration results saved to CSV files in mcr/capture/data/")
+
+    def calibrate(self, datapath: str) -> None:
+        """
+        Loads saved 2D marker data from CSV and computes camera extrinsics.
+
+        Args:
+            datapath (str): Path to the saved CSV file
+        """
+        log.info(f"Loading 2D marker data from {datapath}")
+        if datapath:
+            if not os.path.exists(datapath):
+                log.error(f"File not found: {datapath}")
+                return
+            try:
+                data = pd.read_csv(datapath, header=None).values
+                for row in data:
+                    cam_idx = int(row[-1])
+                    if cam_idx >= self.cameras:
+                        log.warning(f"Skipping row with invalid camera index {cam_idx}")
+                        continue
+                    existing = self.camera_states[cam_idx].undistorted_frames
+                    if existing is None or np.array(existing).size == 0 or existing.ndim != 2:
+                        self.camera_states[cam_idx].undistorted_frames = np.array([row])
+                    else:
+                        self.camera_states[cam_idx].undistorted_frames = np.vstack([existing, row])
+            except Exception as e:
+                log.error(f"Failed to load calibration data from file: {e}")
+                return
+
+        log.info("Data successfully loaded. Starting calibration process...")
+        self._finalize_capture_session(saved_data_rows=None)
+        self._compute_camera_extrinsics()
+        if self.save:
+            self._save_calibration_results()
+            log.info("Calibration results saved to CSV files in mcr/capture/data/")
 
     def _receive_packet_and_process(
         self, idx, cam_state, message, size_msg, saved_data_rows
@@ -355,10 +403,13 @@ class CEC(CaptureProcess):
         After all cameras finish streaming, this method saves the undistorted 2D marker data and
         logs camera summaries.
         """
-        self.server_socket.close()
+        try:
+            self.server_socket.close()
+        except Exception as e:
+            log.error(f"Failed to close server socket: {e}")
         destroyAllWindows()
 
-        if self.save:
+        if self.save and saved_data_rows is not None:
             now = datetime.now()
             ymd, HMS = now.strftime("%y-%m-%d"), now.strftime("%H-%M-%S")
             path = f"debug/dataSaves/{ymd}/"
@@ -993,25 +1044,37 @@ class CEC(CaptureProcess):
             np.array(result.projection_matrices).ravel(),
             delimiter=",",
         )
-
-        all_points = result.all_points_3d
+        np.savetxt(
+            "mcr/capture/data/all_points.csv",
+            result.all_points_3d[:3].T,  # one point per row
+            fmt="%.6f",
+            delimiter=",",
+        )
 
         # Start interactive ArenaViewer
         viewer = ArenaViewer(title="3D Map of the Calibration Process", arenaSize=2)
 
         # Add cameras as frames
         for i, P in enumerate(result.projection_matrices):
+            log.debug(f"Adding camera {i} frame to viewer")
+            log.debug(f"Projection Matrix P{i}:\n{P}")
             R = P[:3, :3]
             t = (P @ np.array([[0], [0], [0], [1]])).reshape(-1, 1)[:3]
             viewer.add_frame(Frame(R=R, t=t), name=f"Camera {i}")
 
         # Add all 3D triangulated points
-        viewer.add_markers(all_points[:3], name="Triangulated Points", color="darkred")
+        viewer.add_markers(
+            result.all_points_3d[:3], name="Triangulated Points", color="darkred"
+        )
 
-        log.info(f"Total triangulated points: {all_points.shape[1]}")
+        log.info(f"Total triangulated points: {result.all_points_3d.shape[1]}")
         log.info("Sample triangulated 3D points (x, y, z):")
-        for i in range(min(15, all_points.shape[1])):  # Log first 15
-            x, y, z = all_points[0, i], all_points[1, i], all_points[2, i]
+        for i in range(min(15, result.all_points_3d.shape[1])):  # Log first 15
+            x, y, z = (
+                result.all_points_3d[0, i],
+                result.all_points_3d[1, i],
+                result.all_points_3d[2, i],
+            )
             log.info(f"  Point {i+1}: ({x:.4f}, {y:.4f}, {z:.4f})")
 
         viewer.figure.show()

@@ -3,5 +3,10 @@
     "/opt/ros/noetic/lib/python3/dist-packages",
     "/home/nuc/catkin_ws/devel/lib/python3/dist-packages"
   ],
-  "ros.distro": "noetic"
+  "ros.distro": "noetic",
+  "python.testing.pytestArgs": [
+    "."
+  ],
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestEnabled": true
 }

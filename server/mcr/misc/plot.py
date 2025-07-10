@@ -3,6 +3,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from mpl_toolkits.mplot3d import Axes3D
+from sklearn.metrics import pairwise_distances
+import numpy as np
+
 
 logging.getLogger("matplotlib.font_manager").setLevel(logging.WARNING)
 
@@ -73,6 +76,8 @@ class ArenaViewer:
             scene=dict(camera=dict(projection=dict(type="orthographic")))
         )
 
+        self.all_points = []  # Store all points for marker size computation
+
     # Reference methods
     def add_origin(self):
         self.figure.add_trace(
@@ -89,6 +94,7 @@ class ArenaViewer:
                 showlegend=True,
             )
         )
+        self.all_points.append(np.array([[0], [0], [0]]))  # Add origin to all_points
 
     def add_boundary(self, points, name, color=None):
         points = np.hstack(
@@ -110,6 +116,7 @@ class ArenaViewer:
                 showlegend=True,
             )
         )
+        self.all_points.append(np.array(points))
 
     def add_plane(self, vertices, name, color=None):
         self.figure.add_trace(
@@ -127,6 +134,7 @@ class ArenaViewer:
                 showlegend=True,
             )
         )
+        self.all_points.append(np.array(vertices))
 
     # Arena elements methods
     def add_frame(self, frame, name, axis_size=1, color=None):
@@ -182,18 +190,30 @@ class ArenaViewer:
                 showlegend=True,
             )
         )
+        self.all_points.append(np.array(points))  # Add points to all_points
 
     def add_markers(self, points, name, color=None):
+        if isinstance(points, list):
+            points = np.array(points)
+
+        self._compute_marker_sizes(points, radius=0.05, base_size=0.50, scale=0.10)
+
         self.figure.add_trace(
             go.Scatter3d(
                 x=points[0],
                 y=points[1],
                 z=points[2],
                 mode="markers",
-                marker=dict(size=3, opacity=1, color=color),
+                marker=dict(size=self.sizes, opacity=1, color=color),
                 name=name,
                 legendgroup="Markers",
                 legendgrouptitle_text="Markers",
                 showlegend=True,
             )
         )
+        self.all_points.append(np.array(points))
+
+    def _compute_marker_sizes(self, points, radius=0.05, base_size=3, scale=2.0):
+        dists = pairwise_distances(points)  # Compute pairwise distances
+        neighbor_counts = (dists < radius).sum(axis=0) - 1  # Count neighbors within radius (excluding self)
+        self.sizes = base_size + scale * neighbor_counts  # Scale size: base size + proportional to number of neighbors

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+import os
+import pickle
+from datetime import datetime
 import click
 
 from mcr.capture.CEC import CEC
@@ -20,8 +23,8 @@ def mocaprasp():
 @click.option(
     "--cameraids",
     "-c",
-    default="0,1,2,3",
-    help="List of active camera IDs (Default: 0,1,2,3)",
+    default="1,2,3",
+    help="List of active camera IDs (Default: 1,2,3)",
 )
 @click.option(
     "--markers", "-m", default=3, help="Number of expected markers (Default: 3)"
@@ -30,7 +33,7 @@ def mocaprasp():
     "--trigger", "-t", default=10, help="Trigger time in seconds (Default: 10)"
 )
 @click.option(
-    "--record", "-r", default=120, help="Recording time in seconds (Default: 120)"
+    "--record", "-r", default=360, help="Recording time in seconds (Default: 360)"
 )
 @click.option("--fps", "-f", default=100, help="Interpolation FPS (Default: 100)")
 @click.option(
@@ -46,6 +49,14 @@ def mocaprasp():
     is_flag=True,
     help="Enable 3D clustering for consensus filtering",
 )
+@click.option(
+    "--collect", is_flag=True, help="Run in collection mode only (no calibration)"
+)
+@click.option(
+    "--calibrate",
+    type=click.Path(exists=True),
+    help="Run in calibration-only mode using saved CSV file",
+)
 def cec(
     cameraids,
     markers,
@@ -57,14 +68,27 @@ def cec(
     dbscan_eps,
     dbscan_min_samples,
     use_clustering,
+    collect,
+    calibrate,
 ):
     """
-    Camera Extrinsics Calibration\n\n
-    - Place 3 collinear markers in the calibration wand;\n
-    - Make sure to move it slowly;\n
-    - Show it to each adjacent pair of cameras.\n\n
-    The default options are already adjusted for this process.
+    Camera Extrinsics Calibration
+    Use either --collect or --calibrate:
+    --collect    → Collect raw 2D data from cameras and save
+    --calibrate  → Load CSV and compute extrinsics (no live capture)
     """
+
+    if collect and calibrate:
+        click.echo("⚠️  You cannot specify both --collect and --calibrate.")
+        click.echo("Example: python3 mocaprasp.py cec --collect")
+        click.echo("         python3 mocaprasp.py cec --calibrate path/to/file.csv")
+        return
+    elif not collect and not calibrate:
+        click.echo("⚠️  You must specify either --collect or --calibrate.")
+        click.echo("Example: python3 mocaprasp.py cec --collect")
+        click.echo("         python3 mocaprasp.py cec --calibrate path/to/file.csv")
+        return
+    
     cecServer = CEC(
         cameraids,
         markers,
@@ -77,16 +101,39 @@ def cec(
         dbscan_min_samples,
         use_clustering,
     )
-    cecServer.connect()
-    cecServer.collect()
 
+    if collect:
+        cecServer.connect()
+        cecServer.collect()
+
+        now = datetime.now().strftime("CEC-%H-%M-%S.pkl")
+        out_dir = "debug/dataSaves"
+        os.makedirs(out_dir, exist_ok=True)
+        pickle_path = os.path.join(out_dir, now)
+        with open(pickle_path, "wb") as f:
+            pickle.dump(cecServer, f)
+        click.echo(f"✅ CEC data saved to {pickle_path}")
+
+    if calibrate:
+        if calibrate.endswith(".pkl"):
+            with open(calibrate, "rb") as f:
+                cecServer = pickle.load(f)
+            cecServer.calibrate(datapath=None)
+        elif calibrate.endswith(".csv"):
+            cecServer = CEC(
+                cameraids, markers, trigger, record, fps, verbose,
+                save, dbscan_eps, dbscan_min_samples, use_clustering
+            )
+            cecServer.calibrate(datapath=calibrate)
+        else:
+            click.echo("❌ Unsupported file type. Use .pkl or .csv")
 
 @click.command(name="gpe")
 @click.option(
     "--cameraids",
     "-c",
-    default="0,1,2,3",
-    help="List of active camera IDs (Default: 0,1,2,3)",
+    default="1,2,3",
+    help="List of active camera IDs (Default: 1,2,3)",
 )
 @click.option(
     "--markers", "-m", default=3, help="Number of expected markers (Default: 3)"
@@ -117,8 +164,8 @@ def gpe(cameraids, markers, trigger, record, fps, verbose, save):
 @click.option(
     "--cameraids",
     "-c",
-    default="0,1,2,3",
-    help="List of active camera IDs (Default: 0,1,2,3)",
+    default="1,2,3",
+    help="List of active camera IDs (Default: 1,2,3)",
 )
 @click.option(
     "--markers", "-m", default=3, help="Number of expected markers (Default: 3)"
