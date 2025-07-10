@@ -980,18 +980,20 @@ class CEC(CaptureProcess):
             )
 
             # Chain transformations from current camera back to camera 0
-            for i in reversed(range(cam)):
-                if i < len(self.calibration_result.translations):
-                    t = np.array(self.calibration_result.translations[i][0]).reshape(
-                        -1, 3
-                    )
-                    R = np.array(self.calibration_result.rotations[i])
-                    lamb = self.calibration_result.scales[i][0]
-                    t_new = np.matmul(-t, R).reshape(-1, 3) * lamb / 100
-                    P = np.vstack(
-                        (np.hstack((R.T, t_new.T)), np.hstack((np.zeros(3), 1)))
-                    )
-                    P_new = np.matmul(P, P_new)
+            for i in reversed(range(cam + 1)):
+                log.info(f"Processing camera {cam} with transformation from camera {i}")
+                log.debug(f"Using translation {i}: {self.calibration_result.translations[i]}")
+                log.debug(f"Using rotation {i}: {self.calibration_result.rotations[i]}")
+                t = np.array(self.calibration_result.translations[i][0]).reshape(
+                    -1, 3
+                )
+                R = np.array(self.calibration_result.rotations[i])
+                lamb = self.calibration_result.scales[i][0]
+                t_new = np.matmul(-t, R).reshape(-1, 3) * lamb / 100
+                P = np.vstack(
+                    (np.hstack((R.T, t_new.T)), np.hstack((np.zeros(3), 1)))
+                )
+                P_new = np.matmul(P, P_new)
 
             proj_matrices.append(P_new)
 
