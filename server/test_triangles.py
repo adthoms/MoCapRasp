@@ -43,8 +43,10 @@ for A, B, C in combinations(centroids, 3):
 
 # Plot combined data and matching triangles
 fig = plt.figure()
-ax = fig.add_subplot(111, projection='3d')
-ax.scatter(points[:, 0], points[:, 1], points[:, 2], c=labels, cmap='tab20', s=3, alpha=0.5)
+ax = fig.add_subplot(111, projection="3d")
+ax.scatter(
+    points[:, 0], points[:, 1], points[:, 2], c=labels, cmap="tab20", s=3, alpha=0.5
+)
 
 # Draw triangle edges between matched centroids
 for A, B, C in triangle_points:
@@ -53,12 +55,14 @@ for A, B, C in triangle_points:
     BC = np.linalg.norm(B - C)
     CA = np.linalg.norm(C - A)
     tri_ratios = sorted([AB / BC, BC / CA, CA / AB])
-    ax.plot(tri[:, 0], tri[:, 1], tri[:, 2], color='black', linewidth=2)
+    ax.plot(tri[:, 0], tri[:, 1], tri[:, 2], color="black", linewidth=2)
     print(f"Triangle found: Ratios: {[round(r, 3) for r in tri_ratios]}")
 
 print(f"Expected Ratios: {[round(r, 3) for r in target_ratios]}")
 
-ax.set_title(f"3:4:5 Triangles Between Cluster Centroids ({len(triangle_points)} found)")
+ax.set_title(
+    f"3:4:5 Triangles Between Cluster Centroids ({len(triangle_points)} found)"
+)
 ax.set_xlabel("X")
 ax.set_ylabel("Y")
 ax.set_zlabel("Z")

@@ -215,5 +215,9 @@ class ArenaViewer:
 
     def _compute_marker_sizes(self, points, radius=0.05, base_size=3, scale=2.0):
         dists = pairwise_distances(points)  # Compute pairwise distances
-        neighbor_counts = (dists < radius).sum(axis=0) - 1  # Count neighbors within radius (excluding self)
-        self.sizes = base_size + scale * neighbor_counts  # Scale size: base size + proportional to number of neighbors
+        neighbor_counts = (dists < radius).sum(
+            axis=0
+        ) - 1  # Count neighbors within radius (excluding self)
+        self.sizes = (
+            base_size + scale * neighbor_counts
+        )  # Scale size: base size + proportional to number of neighbors

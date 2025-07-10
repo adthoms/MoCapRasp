@@ -108,6 +108,7 @@ def decomposeEssentialMat(E, K1, K2, pts1, pts2, log=None):
         log.debug("")
 
     import cv2
+
     retval, R, t, _ = cv2.recoverPose(E, pts1, pts2, K1)
     if retval < len(pts1) * 0.25:
         if log:
@@ -117,6 +118,7 @@ def decomposeEssentialMat(E, K1, K2, pts1, pts2, log=None):
         log.info("cv2.recoverPose successful")
         log.debug(f"R:\n{R}\nt:\n{t}")
     return R, t.reshape(1, 3)
+
 
 def deprecated_decomposeEssentialMat(E, K1, K2, pts1, pts2, log=None):
     # SVD of E

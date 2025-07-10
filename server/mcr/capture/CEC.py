@@ -1,13 +1,14 @@
-import os, math
-import warnings
+import os
+import cv2
+import math
 import logging
+import warnings
 import numpy as np
 import pandas as pd
 from datetime import datetime
 from dataclasses import dataclass, field
 from scipy.interpolate import CubicSpline
 from itertools import combinations, permutations
-from cv2 import destroyAllWindows, triangulatePoints
 
 from mcr.capture.CaptureProcess import CaptureProcess, CameraState
 from mcr.misc.math import isCollinear
@@ -115,7 +116,9 @@ class CEC(CaptureProcess):
                 )
         finally:
             self._finalize_capture_session(saved_data_rows)
-            log.info("Saved raw 2D capture data. Calibration not performed in --collect mode.")
+            log.info(
+                "Saved raw 2D capture data. Calibration not performed in --collect mode."
+            )
             # self._compute_camera_extrinsics()
 
             # if self.save:
@@ -142,10 +145,16 @@ class CEC(CaptureProcess):
                         log.warning(f"Skipping row with invalid camera index {cam_idx}")
                         continue
                     existing = self.camera_states[cam_idx].undistorted_frames
-                    if existing is None or np.array(existing).size == 0 or existing.ndim != 2:
+                    if (
+                        existing is None
+                        or np.array(existing).size == 0
+                        or existing.ndim != 2
+                    ):
                         self.camera_states[cam_idx].undistorted_frames = np.array([row])
                     else:
-                        self.camera_states[cam_idx].undistorted_frames = np.vstack([existing, row])
+                        self.camera_states[cam_idx].undistorted_frames = np.vstack(
+                            [existing, row]
+                        )
             except Exception as e:
                 log.error(f"Failed to load calibration data from file: {e}")
                 return
@@ -405,7 +414,7 @@ class CEC(CaptureProcess):
             self.server_socket.close()
         except Exception as e:
             log.error(f"Failed to close server socket: {e}")
-        destroyAllWindows()
+        cv2.destroyAllWindows()
 
         if self.save and saved_data_rows is not None:
             now = datetime.now()
@@ -496,37 +505,65 @@ class CEC(CaptureProcess):
             log.debug(
                 f"[CAM{cam+1}] Measured Ratios: AB/BC={np.linalg.norm(centroids2[0]-centroids2[1])/np.linalg.norm(centroids2[1]-centroids2[2]):.3f}, BC/CA={np.linalg.norm(centroids2[1]-centroids2[2])/np.linalg.norm(centroids2[0]-centroids2[2]):.3f}, CA/AB={np.linalg.norm(centroids2[0]-centroids2[2])/np.linalg.norm(centroids2[0]-centroids2[1]):.3f}"
             )
-            F, R, t = self._compute_fundamental_essential_and_pose(
-                cam, cam + 1, centroids1, centroids2
-            )
-            if np.isnan(F).any() or np.isnan(R).any() or np.isnan(t).any():
-                continue  # Skip this pair if any matrix is invalid
-            if self.verbose:
-                log.info("Rotation    Matrix\n%s", R.round(4))
-                log.info("Translation Matrix\n%s", t.round(4))
 
-            # Triangulate points
-            P1 = np.hstack((self.cameraMat[cam], np.zeros((3, 1))))
-            P2 = self.cameraMat[cam + 1] @ np.hstack((R, t.T))
+            def estimate_geometry_and_scale(
+                P1, P2, centroids1, centroids2, filtered_idx
+            ):
+                centroids1 = centroids1[filtered_idx]
+                centroids2 = centroids2[filtered_idx]
 
-            points3d = self._triangulate_and_filter_outliers(
-                P1, P2, centroids1, centroids2
-            )
+                F, R, t = self._compute_fundamental_essential_and_pose(
+                    cam, cam + 1, centroids1, centroids2
+                )
+                if np.isnan(F).any() or np.isnan(R).any() or np.isnan(t).any():
+                    log.error(
+                        f"Matrices invalid for CAM{cam}-{cam+1}, skipping update."
+                    )
+                    return None, None, None, None, None, None, None
 
-            # Calculate scale based on real-world distances
+                if self.verbose:
+                    log.info("Rotation    Matrix\n%s", R.round(4))
+                    log.info("Translation Matrix\n%s", t.round(4))
+
+                # Triangulate points
+                P1 = np.hstack((self.cameraMat[cam], np.zeros((3, 1))))
+                P2 = self.cameraMat[cam + 1] @ np.hstack((R, t.reshape(3, 1)))
+
+                points3d = self._triangulate_and_filter_outliers(
+                    P1, P2, centroids1, centroids2
+                )
+
+                # Calculate scale based on real-world distances
+                lamb, L_vec = self._compute_scale(
+                    points3d,
+                    real_lengths,
+                    method="median",
+                )
+                points3d_scaled = points3d * lamb
+
+                return F, R, t, lamb, L_vec, points3d, points3d_scaled
+
             real_lengths = [self.L_real_AB, self.L_real_BC, self.L_real_CA]
-            lamb, L_vec = self._compute_scale(
-                points3d,
-                real_lengths,
-                method="median",
-            )
-            points3d_scaled = points3d * lamb
 
+            filtered_idx, outlier_count = np.arange(len(centroids1)), 0
+            F, R, t, lamb, L_vec, points3d, points3d_scaled = (
+                estimate_geometry_and_scale(
+                    self.cameraMat[cam],
+                    self.cameraMat[cam + 1],
+                    centroids1,
+                    centroids2,
+                    filtered_idx,
+                )
+            )
+            if F is None or R is None or t is None:
+                log.error(
+                    f"Failed to compute fundamental matrix for CAM{cam}-{cam+1}, skipping refinement."
+                )
+                continue
             # Remove outliers based on distance from expected lengths
             filtered_idx, outlier_count = self._remove_distance_outliers(
                 points3d_scaled, real_lengths
             )
-
             if filtered_idx is None or len(filtered_idx) == 0:
                 log.warning(
                     f"No valid points left after outlier rejection for CAM{cam}-{cam+1}, skipping refinement."
@@ -534,30 +571,20 @@ class CEC(CaptureProcess):
                 continue
 
             log.info("Refining fundamental matrix estimation using filtered inliers")
-
-            centroids1 = centroids1[filtered_idx]
-            centroids2 = centroids2[filtered_idx]
-
-            F, R, t = self._compute_fundamental_essential_and_pose(
-                cam, cam + 1, centroids1, centroids2
+            F, R, t, lamb, L_vec, points3d, points3d_scaled = (
+                estimate_geometry_and_scale(
+                    self.cameraMat[cam],
+                    self.cameraMat[cam + 1],
+                    centroids1,
+                    centroids2,
+                    filtered_idx,
+                )
             )
-
-            if np.isnan(F).any() or np.isnan(R).any() or np.isnan(t).any():
+            if F is None or R is None or t is None:
                 log.error(
-                    f"Refined matrices invalid for CAM{cam}-{cam+1}, skipping update."
+                    f"Failed to compute refined fundamental matrix for CAM{cam}-{cam+1}, skipping further processing."
                 )
                 continue
-
-            # Triangulate points again with refined centroids
-            P1 = np.hstack((self.cameraMat[cam], np.zeros((3, 1))))
-            P2 = self.cameraMat[cam + 1] @ np.hstack((R, t.T))
-            points3d = self._triangulate_and_filter_outliers(
-                P1, P2, centroids1, centroids2
-            )
-
-            # Compute scale again with refined points
-            lamb, L_vec = self._compute_scale(points3d, real_lengths, method="mode")
-            points3d_scaled = points3d * lamb
 
             # Log statistics
             self._log_scale_statistics(L_vec, real_lengths, lamb)
@@ -692,7 +719,7 @@ class CEC(CaptureProcess):
         return centroids1, centroids2
 
     def _compute_fundamental_essential_and_pose(
-        self, cam1, cam2, centroids1, centroids2
+        self, cam1, cam2, centroids1, centroids2, cv2_compute=True
     ) -> tuple:
         """
         Computes the fundamental matrix, essential matrix, and camera pose (R, t)
@@ -708,20 +735,47 @@ class CEC(CaptureProcess):
             tuple: Fundamental matrix F, rotation R, translation t
         """
         log.debug(f"Computing F, E, R, t for cameras {cam1} and {cam2}")
-        F, _ = estimateFundMatrix_8norm(centroids1, centroids2, verbose=self.verbose)
-        if np.any(np.isnan(F)):
-            log.error(f"Invalid fundamental matrix for cameras {cam1} and {cam2}")
-            return np.nan, np.nan, np.nan
 
-        E = self.cameraMat[cam2].T @ F @ self.cameraMat[cam1]
-        R, t = decomposeEssentialMat(
-            E,
-            self.cameraMat[cam1],
-            self.cameraMat[cam2],
-            centroids1,
-            centroids2,
-            log=log,
-        )
+        if not cv2_compute:
+            ## MANUAL METHOD
+            F, _ = estimateFundMatrix_8norm(centroids1, centroids2, verbose=self.verbose)
+            if np.any(np.isnan(F)):
+                log.error(f"Invalid fundamental matrix for cameras {cam1} and {cam2}")
+                return np.nan, np.nan, np.nan
+
+            E = self.cameraMat[cam2].T @ F @ self.cameraMat[cam1]
+
+            R, t = decomposeEssentialMat(
+                E,
+                self.cameraMat[cam1],
+                self.cameraMat[cam2],
+                centroids1,
+                centroids2,
+                log=log,
+            )
+        else:
+            # CV2 METHOD
+            centroids1 = centroids1.astype(np.float32)
+            centroids2 = centroids2.astype(np.float32)
+
+            K1 = self.cameraMat[cam1]
+            K2 = self.cameraMat[cam2]
+
+            F, mask = cv2.findFundamentalMat(
+                centroids1, centroids2, cv2.FM_RANSAC, 0.01, 0.99
+            )
+            if F is None or np.any(np.isnan(F)):
+                log.error(f"Invalid fundamental matrix for cameras {cam1} and {cam2}")
+                return np.nan, np.nan, np.nan
+            
+            E, e_mask = cv2.findEssentialMat(
+                centroids1, centroids2, K1, method=cv2.RANSAC, prob=0.999, threshold=0.01
+            )
+            if E is None or np.any(np.isnan(E)):
+                log.error(f"Invalid essential matrix for cameras {cam1} and {cam2}")
+                return np.nan, np.nan, np.nan
+            
+            _, R, t, pose_mask = cv2.recoverPose(E, centroids1, centroids2, K1, mask=e_mask)
 
         if np.any(np.isnan(R)) or np.any(np.isnan(t)):
             log.error(
@@ -729,7 +783,7 @@ class CEC(CaptureProcess):
             )
             return np.nan, np.nan, np.nan
 
-        return F, R, t
+        return F, R, t.reshape((1, 3))
 
     def _triangulate_and_filter_outliers(self, P1, P2, centroids1, centroids2) -> tuple:
         """
@@ -745,7 +799,7 @@ class CEC(CaptureProcess):
             tuple: Triangulated 3D points
         """
         log.debug("Triangulating points...")
-        points3d_homogeneous = triangulatePoints(
+        points3d_homogeneous = cv2.triangulatePoints(
             P1, P2, projectionPoints(centroids1), projectionPoints(centroids2)
         )
         points3d = (points3d_homogeneous[:3] / points3d_homogeneous[3]).T
@@ -981,17 +1035,15 @@ class CEC(CaptureProcess):
             # Chain transformations from current camera back to camera 0
             for i in reversed(range(cam + 1)):
                 log.info(f"Processing camera {cam} with transformation from camera {i}")
-                log.debug(f"Using translation {i}: {self.calibration_result.translations[i]}")
-                log.debug(f"Using rotation {i}: {self.calibration_result.rotations[i]}")
-                t = np.array(self.calibration_result.translations[i][0]).reshape(
-                    -1, 3
+                log.debug(
+                    f"Using translation {i}: {self.calibration_result.translations[i]}"
                 )
+                log.debug(f"Using rotation {i}: {self.calibration_result.rotations[i]}")
+                t = np.array(self.calibration_result.translations[i][0]).reshape(-1, 3)
                 R = np.array(self.calibration_result.rotations[i])
                 lamb = self.calibration_result.scales[i][0]
                 t_new = np.matmul(-t, R).reshape(-1, 3) * lamb / 100
-                P = np.vstack(
-                    (np.hstack((R.T, t_new.T)), np.hstack((np.zeros(3), 1)))
-                )
+                P = np.vstack((np.hstack((R.T, t_new.T)), np.hstack((np.zeros(3), 1))))
                 P_new = np.matmul(P, P_new)
 
             proj_matrices.append(P_new)

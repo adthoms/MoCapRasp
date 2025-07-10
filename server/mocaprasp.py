@@ -88,7 +88,7 @@ def cec(
         click.echo("Example: python3 mocaprasp.py cec --collect")
         click.echo("         python3 mocaprasp.py cec --calibrate path/to/file.csv")
         return
-    
+
     cecServer = CEC(
         cameraids,
         markers,
@@ -121,12 +121,21 @@ def cec(
             cecServer.calibrate(datapath=None)
         elif calibrate.endswith(".csv"):
             cecServer = CEC(
-                cameraids, markers, trigger, record, fps, verbose,
-                save, dbscan_eps, dbscan_min_samples, use_clustering
+                cameraids,
+                markers,
+                trigger,
+                record,
+                fps,
+                verbose,
+                save,
+                dbscan_eps,
+                dbscan_min_samples,
+                use_clustering,
             )
             cecServer.calibrate(datapath=calibrate)
         else:
             click.echo("❌ Unsupported file type. Use .pkl or .csv")
+
 
 @click.command(name="gpe")
 @click.option(
