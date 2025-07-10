@@ -97,7 +97,7 @@ def estimateFundMatrix_8norm(pts1, pts2, verbose=True):
     return F, True
 
 
-def decomposeEssentialMat(E, K1, K2, pts1, pts2, cv2_compute=False, log=None):
+def decomposeEssentialMat(E, K1, K2, pts1, pts2, log=None):
     if log:
         log.info("  Using custom essential matrix decomposition")
         log.debug("")
@@ -107,19 +107,18 @@ def decomposeEssentialMat(E, K1, K2, pts1, pts2, cv2_compute=False, log=None):
         log.debug(f"  pts1 shape: {pts1.shape}, pts2 shape: {pts2.shape}")
         log.debug("")
 
-    if cv2_compute:
-        import cv2
-
-        retval, R, t, _ = cv2.recoverPose(E, pts1, pts2, K1)
-        if retval < len(pts1) * 0.25:
-            if log:
-                log.warning(f"recoverPose returned low inliers: {retval}/{len(pts1)}")
-            return np.NaN, np.NaN
+    import cv2
+    retval, R, t, _ = cv2.recoverPose(E, pts1, pts2, K1)
+    if retval < len(pts1) * 0.25:
         if log:
-            log.info("cv2.recoverPose successful")
-            log.debug(f"R:\n{R}\nt:\n{t}")
-        return R, t.reshape(1, 3)
+            log.warning(f"recoverPose returned low inliers: {retval}/{len(pts1)}")
+        return np.NaN, np.NaN
+    if log:
+        log.info("cv2.recoverPose successful")
+        log.debug(f"R:\n{R}\nt:\n{t}")
+    return R, t.reshape(1, 3)
 
+def deprecated_decomposeEssentialMat(E, K1, K2, pts1, pts2, log=None):
     # SVD of E
     U, D, V = singularValueDecomposition(E)
     if log:

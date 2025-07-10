@@ -720,7 +720,6 @@ class CEC(CaptureProcess):
             self.cameraMat[cam2],
             centroids1,
             centroids2,
-            cv2_compute=False,
             log=log,
         )
 
