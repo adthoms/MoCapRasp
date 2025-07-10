@@ -88,14 +88,12 @@ class CEC(CaptureProcess):
 
     def __getstate__(self):
         state = self.__dict__.copy()
-        # Remove unpickleable attributes
         if "server_socket" in state:
             state["server_socket"] = None
         return state
 
     def __setstate__(self, state):
         self.__dict__.update(state)
-        # You must call `connect()` later to restore the socket
 
     def collect(self) -> None:
         """
