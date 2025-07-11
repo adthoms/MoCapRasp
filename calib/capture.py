@@ -18,11 +18,11 @@ with picamera.PiCamera(resolution=(960, 640), framerate=20, sensor_mode=2) as ca
     camera.awb_mode = "off"
     camera.awb_gains = g
 
-    num_images = 30
+    num_images = 300
     for i in range(num_images):
         filename = f"{output_dir}/calib_{i:03d}.jpg"
         camera.capture(filename)
         print(f"Captured {filename}")
-        time.sleep(0.5)
+        time.sleep(0.2)
 
     camera.stop_preview()
