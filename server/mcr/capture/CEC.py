@@ -738,7 +738,9 @@ class CEC(CaptureProcess):
 
         if not cv2_compute:
             ## MANUAL METHOD
-            F, _ = estimateFundMatrix_8norm(centroids1, centroids2, verbose=self.verbose)
+            F, _ = estimateFundMatrix_8norm(
+                centroids1, centroids2, verbose=self.verbose
+            )
             if np.any(np.isnan(F)):
                 log.error(f"Invalid fundamental matrix for cameras {cam1} and {cam2}")
                 return np.nan, np.nan, np.nan
@@ -767,15 +769,22 @@ class CEC(CaptureProcess):
             if F is None or np.any(np.isnan(F)):
                 log.error(f"Invalid fundamental matrix for cameras {cam1} and {cam2}")
                 return np.nan, np.nan, np.nan
-            
+
             E, e_mask = cv2.findEssentialMat(
-                centroids1, centroids2, K1, method=cv2.RANSAC, prob=0.999, threshold=0.01
+                centroids1,
+                centroids2,
+                K1,
+                method=cv2.RANSAC,
+                prob=0.999,
+                threshold=0.01,
             )
             if E is None or np.any(np.isnan(E)):
                 log.error(f"Invalid essential matrix for cameras {cam1} and {cam2}")
                 return np.nan, np.nan, np.nan
-            
-            _, R, t, pose_mask = cv2.recoverPose(E, centroids1, centroids2, K1, mask=e_mask)
+
+            _, R, t, pose_mask = cv2.recoverPose(
+                E, centroids1, centroids2, K1, mask=e_mask
+            )
 
         if np.any(np.isnan(R)) or np.any(np.isnan(t)):
             log.error(
