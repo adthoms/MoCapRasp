@@ -6,11 +6,11 @@ image_path = "marker_board.jpg"
 # Parameters for the board
 SQUARES_VERTICALLY = 6
 SQUARES_HORIZONTALLY = 6
-MARKER_LENGTH = 0.0880  # Marker length in meters
-BUFFER_LENGTH = 0.0264  # Buffer length in meters
-
-# Calculate the Square Length for the board
-SQUARE_LENGTH = MARKER_LENGTH + BUFFER_LENGTH
+BIG_SQUARE_LENGTH = 0.0880  # Marker length in meters
+MARKER_TO_BIG_SQUARE_RATIO = 0.810  # Ratio of marker size to big square size
+MARKER_LENGTH = BIG_SQUARE_LENGTH * MARKER_TO_BIG_SQUARE_RATIO  # Marker length in meters
+BUFFER_LENGTH = 0.0264 + BIG_SQUARE_LENGTH - MARKER_LENGTH  # Buffer length in meters
+SQUARE_LENGTH = MARKER_LENGTH + BUFFER_LENGTH   # Length of each square in meters
 
 # List of standard ArUco dictionaries to try
 #  Note that DICT_APRILTAG_ are often used for pure ArUco tags,

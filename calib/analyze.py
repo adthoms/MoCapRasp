@@ -14,7 +14,8 @@ from constants import (
 )
 
 DICT = cv2.aruco.DICT_APRILTAG_36h11
-MIN_MARKERS = 12    # Minimum number of markers to consider a valid calibration
+TOT_MARKERS = SQUARES_HORIZONTALLY * SQUARES_VERTICALLY
+MIN_MARKERS = int(TOT_MARKERS * 0.25)  # Minimum markers to detect for calibration
 
 def get_detector():
     aruco_dict = cv2.aruco.getPredefinedDictionary(DICT)
@@ -38,9 +39,18 @@ def get_board(aruco_dict):
     )
 
 def load_images(cam_num):
-    images = glob.glob(f"./pics/cam{cam_num}/calib_*.jpg")
-    images.sort(key=lambda x: int(os.path.basename(x).split("_")[1].split(".")[0]))
+    images = glob.glob(f"./raw_pics/cam{cam_num}/*.jpg")
+    images.sort()
     return images
+
+def save_image(fname, img):
+    cam_num = fname.split('/')[-2].replace('cam', '')
+    if not os.path.exists("./detected_pics"):
+        os.makedirs("./detected_pics")
+    if not os.path.exists(f"./detected_pics/cam{cam_num}"):
+        os.makedirs(f"./detected_pics/cam{cam_num}")
+    filename = f"./detected_pics/cam{cam_num}/{os.path.basename(fname)}"
+    cv2.imwrite(filename, img)
 
 def process_image(img_path, detector, display=False, verbose=False):
     img = cv2.imread(img_path)
@@ -55,9 +65,10 @@ def process_image(img_path, detector, display=False, verbose=False):
     if ids is not None and len(ids) >= MIN_MARKERS:
         if verbose:
             print(f"{img_path} handled: num of detected markers = {len(ids)}")
+        vis = gray.copy() if gray.ndim == 3 else cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        cv2.aruco.drawDetectedMarkers(vis, corners, ids)
+        save_image(img_path, vis)
         if display:
-            vis = gray.copy()
-            cv2.aruco.drawDetectedMarkers(vis, corners, ids)
             cv2.imshow(f"Markers in {os.path.basename(img_path)}", vis)
             cv2.waitKey(300)
         return corners, ids, gray.shape[::-1]
@@ -66,20 +77,59 @@ def process_image(img_path, detector, display=False, verbose=False):
             print(f"{img_path} skipped: num of detected markers = {len(ids) if ids is not None else 0}")
         return None, None, None
 
-def calibrate_camera(corners_list, ids_list, counter, image_size, board):
+def calibrate_camera(corners_list, ids_list, counter, image_size, board, type="pinhole"):
     if len(corners_list) < 4:
         return None
 
-    ret, mtx, dist, rvecs, tvecs = cv2.aruco.calibrateCameraAruco(
-        corners=corners_list,
-        ids=ids_list,
-        counter=counter,
-        board=board,
-        imageSize=image_size,
-        cameraMatrix=None,
-        distCoeffs=None,
-        flags=cv2.CALIB_FIX_K4 | cv2.CALIB_FIX_K5 | cv2.CALIB_FIX_K6,
-    )
+    if type == "pinhole":
+        ret, mtx, dist, rvecs, tvecs = cv2.aruco.calibrateCameraAruco(
+            corners=corners_list,
+            ids=ids_list,
+            counter=counter,
+            board=board,
+            imageSize=image_size,
+            cameraMatrix=None,
+            distCoeffs=None,
+            flags=0,
+        )
+    elif type == "fisheye":
+        # Prepare object points
+        obj_points = []
+        img_points = []
+        
+        i = 0
+        for count in counter:
+            ids = ids_list[i:i+count]
+            corners = corners_list[i:i+count]
+            i += count
+
+            valid_obj_pts, valid_img_pts = cv2.aruco.getBoardObjectAndImagePoints(board, corners, ids)
+            if len(valid_obj_pts) > 0:
+                obj_points.append(np.array(valid_obj_pts, dtype=np.float32))
+                img_points.append(np.array(valid_img_pts, dtype=np.float32))
+
+        mtx = np.zeros((3, 3))
+        dist = np.zeros((4, 1))
+        rvecs = []
+        tvecs = []
+
+        flags = cv2.fisheye.CALIB_RECOMPUTE_EXTRINSIC | \
+                cv2.fisheye.CALIB_FIX_SKEW
+
+        rms, mtx, dist, rvecs, tvecs = cv2.fisheye.calibrate(
+            obj_points,
+            img_points,
+            image_size,
+            mtx,
+            dist,
+            rvecs,
+            tvecs,
+            flags,
+            (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 200, 1e-6)
+        )
+    else:
+        raise ValueError("Unsupported camera model type. Use 'pinhole' or 'fisheye'.")
+
     return ret, mtx, dist, rvecs, tvecs
 
 def plot_corner_heatmap(corners_list, image_size, output_path="corner_heatmap.png"):
@@ -103,7 +153,7 @@ def plot_corner_heatmap(corners_list, image_size, output_path="corner_heatmap.pn
     plt.close()
 
 def save_results(cam_num, mtx, dist, rvecs, tvecs):
-    filename = f"cam{cam_num}_calib.npz"
+    filename = f"./results/cam{cam_num}_calib.npz"
     np.savez(filename, mtx=mtx, dist=dist, rvecs=rvecs, tvecs=tvecs)
     print(f"Calibration results saved to {filename}")
 
@@ -138,7 +188,7 @@ def main():
         cv2.destroyAllWindows()
 
         if args.heatmap and image_size and all_corners:
-            plot_corner_heatmap(all_corners, image_size, f"cam{cam_num}_heatmap.png")
+            plot_corner_heatmap(all_corners, image_size, f"./heatmaps/cam{cam_num}_heatmap.png")
         if len(all_corners) < 4:
             print(f"Not enough data to calibrate camera {cam_num}. Skipping.")
             continue
