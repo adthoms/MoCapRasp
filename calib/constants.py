@@ -9,7 +9,7 @@ SQUARES_HORIZONTALLY = 6
 MARKER_LENGTH = 0.0880  # Marker length in meters
 BUFFER_LENGTH = 0.0264  # Buffer length in meters
 
-# Calculate the Square Length for the ChArUco board
+# Calculate the Square Length for the board
 SQUARE_LENGTH = MARKER_LENGTH + BUFFER_LENGTH
 
 # List of standard ArUco dictionaries to try

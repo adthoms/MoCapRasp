@@ -1,144 +1,165 @@
-import os, sys
+import os
+import sys
 import cv2
 import glob
+import argparse
 import numpy as np
+import matplotlib.pyplot as plt
 
-try:
-    from constants import (
-        MARKER_LENGTH,
-        SQUARE_LENGTH,
-        SQUARES_HORIZONTALLY,
-        SQUARES_VERTICALLY,
-    )
-except ImportError:
-    print("Error: constants.py not found. Make sure it is in the same directory.")
-    sys.exit(1)
-
-DICT = cv2.aruco.DICT_APRILTAG_36h11
-
-# Load predefined dictionary and parameters
-aruco_dict = cv2.aruco.getPredefinedDictionary(DICT)
-parameters = cv2.aruco.DetectorParameters()
-parameters.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
-parameters.adaptiveThreshWinSizeMin = 3
-parameters.adaptiveThreshWinSizeMax = 23
-parameters.minMarkerPerimeterRate = 0.01
-parameters.maxErroneousBitsInBorderRate = 0.5
-parameters.errorCorrectionRate = 0.9
-detector = cv2.aruco.ArucoDetector(aruco_dict, parameters)
-
-# Define grid board object
-board = cv2.aruco.GridBoard(
-    (SQUARES_HORIZONTALLY, SQUARES_VERTICALLY),
-    SQUARE_LENGTH,
+from constants import (
     MARKER_LENGTH,
-    aruco_dict,
+    BUFFER_LENGTH,
+    SQUARES_HORIZONTALLY,
+    SQUARES_VERTICALLY,
 )
 
-# load images
-camera_numbers = [int(num) for num in sys.argv[1:] if num.isdigit()]
+DICT = cv2.aruco.DICT_APRILTAG_36h11
+MIN_MARKERS = 12    # Minimum number of markers to consider a valid calibration
 
-for cam_num in camera_numbers:
-    images = glob.glob(f"./pics/cam{cam_num}/calib_*.jpg")
-    # Accumulate detected points using Python lists
-    
-    all_corners = np.array([], dtype=np.float32).reshape(0, 2)  # 2D Corners
-    all_ids = np.array([], dtype=np.int32)  # Flattened IDs
-    counter = np.array([], dtype=np.int32)   # Count of markers per image
-    image_size = None
+def get_detector():
+    aruco_dict = cv2.aruco.getPredefinedDictionary(DICT)
+    params = cv2.aruco.DetectorParameters()
+    params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
+    params.aprilTagQuadDecimate = 1.0
+    params.adaptiveThreshWinSizeMin = 3
+    params.adaptiveThreshWinSizeMax = 101
+    params.adaptiveThreshWinSizeStep = 3
+    params.maxErroneousBitsInBorderRate = 0.6
+    params.polygonalApproxAccuracyRate = 0.04
+    params.errorCorrectionRate = 0.8
+    return cv2.aruco.ArucoDetector(aruco_dict, params), aruco_dict
 
-    for fname in images:
-        print(f"Processing {fname}")
-        img = cv2.imread(fname)
-        if img is None:
-            print(f"Error loading image: {fname}")
-            continue
-
-        # Convert to grayscale if needed
-        gray = img.copy() if img.ndim == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-        # Apply Gaussian blur to reduce IR noise
-        gray = cv2.GaussianBlur(gray, (5, 5), 0)
-
-        # Improve contrast
-        gray = cv2.equalizeHist(gray)
-
-        # Adaptive thresholding for uneven IR lighting
-        gray = cv2.adaptiveThreshold(
-            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
-        )
-
-        # Detect markers in the image
-        corners, ids, rejectedImgPoints = detector.detectMarkers(gray)
-        corners = np.array(corners, dtype=np.float32) if corners is not None else None
-        ids = np.array(ids, dtype=np.int32) if ids is not None else None
-
-        if ids is not None and len(ids) > 0:
-            # Append the corners detected in THIS image as a single element to all_corners
-            all_corners = np.vstack((all_corners, corners)) if all_corners.size else corners
-            # Extend the flattened IDs from THIS image to the overall flat list
-            all_ids = (
-                np.concatenate((all_ids, ids.flatten()))
-                if all_ids.size
-                else ids.flatten()
-            )
-            # Store the count of markers for THIS image
-            counter = np.append(counter, len(ids))
-            print(f"Detected {len(ids)} markers in {fname}")
-
-            if image_size is None:
-                image_size = gray.shape[::-1]  # (width, height)
-
-            # Draw and show detected markers
-            img_display = img.copy()  # Create a copy to draw on
-            cv2.aruco.drawDetectedMarkers(img_display, corners, ids)
-            # cv2.imshow(
-            #     f"Detected {len(ids)} Markers in {os.path.basename(fname)}", img_display
-            # )
-            # cv2.waitKey(300)
-
-    cv2.destroyAllWindows()
-    # Prepare data for calibration
-    all_corners = np.array(all_corners, dtype=np.float32)
-    all_ids = np.array(all_ids, dtype=np.int32)
-    counter = np.array(counter, dtype=np.int32)
-    print(all_corners.shape, all_ids.shape, counter)
-
-    # Camera calibration
-    # Calibration requires at least a few views (e.g., 4 or more)
-    if all_corners.size < 4 or all_ids.size < 4:
-        print(
-            f"Not enough images with detected markers for calibration (need at least 4). \nCamera calibration for cam{cam_num} failed."
-        )
-        continue
-
-    # Call cv2.aruco.calibrateCameraAruco with all required arguments
-    ret, camera_matrix, dist_coeffs, rvecs, tvecs = cv2.aruco.calibrateCameraAruco(
-        corners=all_corners,  # List of arrays, one array per image
-        ids=all_ids,  # Single concatenated array of all IDs
-        counter=counter,  # Array indicating marker count per image
-        board=board,  # The defined GridBoard object
-        imageSize=image_size,  # Size of the images
-        cameraMatrix=None,  # Initialized output camera matrix
-        distCoeffs=None,  # Initialized output distortion coefficients
+def get_board(aruco_dict):
+    return cv2.aruco.GridBoard(
+        size=(SQUARES_HORIZONTALLY, SQUARES_VERTICALLY),
+        markerLength=MARKER_LENGTH,
+        markerSeparation=BUFFER_LENGTH,
+        dictionary=aruco_dict,
     )
 
-    if ret:
-        print(f"\nCamera calibration for cam{cam_num} successful.")
-        print(f"RMS Error: {ret}")
-        print("Camera matrix :")
-        print(camera_matrix)
-        print("\nDistortion coefficients :")
-        print(dist_coeffs)
+def load_images(cam_num):
+    images = glob.glob(f"./pics/cam{cam_num}/calib_*.jpg")
+    images.sort(key=lambda x: int(os.path.basename(x).split("_")[1].split(".")[0]))
+    return images
 
-        # Save results to a NumPy .npz file
-        np.savez(
-            f"calibration_results_cam{cam_num}.npz",
-            mtx=camera_matrix,
-            dist=dist_coeffs,
-            rvecs=rvecs,
-            tvecs=tvecs,
-        )
-        print(f"\nCalibration results saved to calibration_results_cam{cam_num}.npz")
+def process_image(img_path, detector, display=False, verbose=False):
+    img = cv2.imread(img_path)
+    if img is None:
+        if verbose:
+            print(f"Error loading image: {img_path}")
+        return None, None, None
+
+    gray = img.copy() if img.ndim == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    corners, ids, _ = detector.detectMarkers(gray)
+
+    if ids is not None and len(ids) >= MIN_MARKERS:
+        if verbose:
+            print(f"{img_path} handled: num of detected markers = {len(ids)}")
+        if display:
+            vis = gray.copy()
+            cv2.aruco.drawDetectedMarkers(vis, corners, ids)
+            cv2.imshow(f"Markers in {os.path.basename(img_path)}", vis)
+            cv2.waitKey(300)
+        return corners, ids, gray.shape[::-1]
     else:
-        print(f"\nCamera calibration for cam{cam_num} failed.")
+        if verbose:
+            print(f"{img_path} skipped: num of detected markers = {len(ids) if ids is not None else 0}")
+        return None, None, None
+
+def calibrate_camera(corners_list, ids_list, counter, image_size, board):
+    if len(corners_list) < 4:
+        return None
+
+    ret, mtx, dist, rvecs, tvecs = cv2.aruco.calibrateCameraAruco(
+        corners=corners_list,
+        ids=ids_list,
+        counter=counter,
+        board=board,
+        imageSize=image_size,
+        cameraMatrix=None,
+        distCoeffs=None,
+        flags=cv2.CALIB_FIX_K4 | cv2.CALIB_FIX_K5 | cv2.CALIB_FIX_K6,
+    )
+    return ret, mtx, dist, rvecs, tvecs
+
+def plot_corner_heatmap(corners_list, image_size, output_path="corner_heatmap.png"):
+    heat = np.zeros((image_size[1], image_size[0]), dtype=np.float32)
+
+    for marker_corners in corners_list:
+        for marker in marker_corners:
+            for (x, y) in marker:
+                xi, yi = int(round(x)), int(round(y))
+                if 0 <= xi < heat.shape[1] and 0 <= yi < heat.shape[0]:
+                    heat[yi, xi] += 1
+
+    plt.figure(figsize=(8, 6))
+    plt.title("Detected Marker Corner Heatmap")
+    plt.imshow(heat, cmap='hot', interpolation='nearest')
+    plt.colorbar(label="Corner Hits")
+    plt.xlabel("X (pixels)")
+    plt.ylabel("Y (pixels)")
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300)
+    plt.close()
+
+def save_results(cam_num, mtx, dist, rvecs, tvecs):
+    filename = f"cam{cam_num}_calib.npz"
+    np.savez(filename, mtx=mtx, dist=dist, rvecs=rvecs, tvecs=tvecs)
+    print(f"Calibration results saved to {filename}")
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("cameras", nargs="+", type=int, help="Camera numbers")
+    parser.add_argument("--save", action="store_true")
+    parser.add_argument("--display", action="store_true")
+    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--heatmap", action="store_true")
+    args = parser.parse_args()
+
+    detector, aruco_dict = get_detector()
+    board = get_board(aruco_dict)
+    print(f"Using ArUco dictionary: {DICT} with {board.getGridSize()} grid of markers.")
+
+    for cam_num in args.cameras:
+        print(f"\nProcessing camera {cam_num}...")
+        images = load_images(cam_num)
+        all_corners, all_ids, counter = [], [], []
+        image_size = None
+
+        for fname in images:
+            corners, ids, size = process_image(fname, detector, display=args.display, verbose=args.verbose)
+            if corners is not None:
+                all_corners.extend(corners)
+                all_ids.extend(ids.flatten())
+                counter.append(len(ids))
+                if image_size is None:
+                    image_size = size
+
+        cv2.destroyAllWindows()
+
+        if args.heatmap and image_size and all_corners:
+            plot_corner_heatmap(all_corners, image_size, f"cam{cam_num}_heatmap.png")
+        if len(all_corners) < 4:
+            print(f"Not enough data to calibrate camera {cam_num}. Skipping.")
+            continue
+
+        result = calibrate_camera(all_corners, np.array(all_ids), np.array(counter), image_size, board)
+
+        if result is None:
+            print(f"Calibration failed for camera {cam_num}.")
+            continue
+
+        ret, mtx, dist, rvecs, tvecs = result
+        print(f"RMS Error for camera {cam_num}: {ret}")
+        if ret > 1.0:
+            print("RMS error too high (>1.0), check marker coverage and focus.")
+            continue
+
+        print("Camera matrix:\n", mtx)
+        print("Distortion coefficients:\n", dist)
+
+        if args.save:
+            save_results(cam_num, mtx, dist, rvecs, tvecs)
+
+if __name__ == "__main__":
+    main()
