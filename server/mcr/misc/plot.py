@@ -60,7 +60,7 @@ class ArenaViewer:
                 ),
                 zaxis=dict(
                     range=(
-                        [-1e-9, 2 * arenaSize - 1e-9] if reference else None
+                        [-arenaSize, arenaSize] if reference else None
                     ),  # Room for negative z markers in the Ground Wand
                     showbackground=reference,
                     showticklabels=graphical,
