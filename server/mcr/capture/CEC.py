@@ -133,31 +133,33 @@ class CEC(CaptureProcess):
             datapath (str): Path to the saved CSV file
         """
         log.info(f"Loading 2D marker data from {datapath}")
-        if datapath:
-            if not os.path.exists(datapath):
-                log.error(f"File not found: {datapath}")
-                return
-            try:
-                data = pd.read_csv(datapath, header=None).values
-                for row in data:
-                    cam_idx = int(row[-1])
-                    if cam_idx >= self.cameras:
-                        log.warning(f"Skipping row with invalid camera index {cam_idx}")
-                        continue
-                    existing = self.camera_states[cam_idx].undistorted_frames
-                    if (
-                        existing is None
-                        or np.array(existing).size == 0
-                        or existing.ndim != 2
-                    ):
-                        self.camera_states[cam_idx].undistorted_frames = np.array([row])
-                    else:
-                        self.camera_states[cam_idx].undistorted_frames = np.vstack(
-                            [existing, row]
-                        )
-            except Exception as e:
-                log.error(f"Failed to load calibration data from file: {e}")
-                return
+        if not datapath:
+            log.error("No data path provided. Cannot load calibration data.")
+            return
+        if not os.path.exists(datapath):
+            log.error(f"File not found: {datapath}")
+            return
+        try:
+            data = pd.read_csv(datapath, header=None).values
+            for row in data:
+                cam_idx = int(row[-1])
+                if cam_idx >= self.cameras:
+                    log.warning(f"Skipping row with invalid camera index {cam_idx}")
+                    continue
+                existing = self.camera_states[cam_idx].undistorted_frames
+                if (
+                    existing is None
+                    or np.array(existing).size == 0
+                    or existing.ndim != 2
+                ):
+                    self.camera_states[cam_idx].undistorted_frames = np.array([row])
+                else:
+                    self.camera_states[cam_idx].undistorted_frames = np.vstack(
+                        [existing, row]
+                    )
+        except Exception as e:
+            log.error(f"Failed to load calibration data from file: {e}")
+            return
 
         log.info("Data successfully loaded. Starting calibration process...")
         self._finalize_capture_session(saved_data_rows=None)
