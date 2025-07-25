@@ -106,13 +106,15 @@ def cec(
         cecServer.connect()
         cecServer.collect()
 
-        now = datetime.now().strftime("CEC-%H-%M-%S.pkl")
-        out_dir = "debug/dataSaves"
+        ymd, now = datetime.now().strftime("%y-%m-%d"), datetime.now().strftime(
+            "%H-%M-%S"
+        )
+        out_dir = "debug/dataSaves/" + ymd + "/"
         os.makedirs(out_dir, exist_ok=True)
-        pickle_path = os.path.join(out_dir, now)
-        with open(pickle_path, "wb") as f:
+        out_path = os.path.join(out_dir, f"CEC-{now}.pkl")
+        with open(out_path, "wb") as f:
             pickle.dump(cecServer, f)
-        click.echo(f"✅ CEC data saved to {pickle_path}")
+        click.echo(f"✅ CEC data saved to {out_path}")
 
     if calibrate:
         if calibrate.endswith(".pkl"):
@@ -135,6 +137,7 @@ def cec(
             cecServer.calibrate(datapath=calibrate)
         else:
             click.echo("❌ Unsupported file type. Use .pkl or .csv")
+        click.echo("✅ Camera extrinsics calibration completed.")
 
 
 @click.command(name="gpe")
@@ -156,17 +159,63 @@ def cec(
     "--verbose", "-v", is_flag=True, help="Show ordering and interpolation verbosity"
 )
 @click.option("--save", "-s", is_flag=True, help="Save received packages to CSV")
-def gpe(cameraids, markers, trigger, record, fps, verbose, save):
+@click.option(
+    "--collect", is_flag=True, help="Run in collection mode only (no estimation)"
+)
+@click.option(
+    "--estimate",
+    type=click.Path(exists=True),
+    help="Run ground plane estimation using a saved CSV file",
+)
+def gpe(cameraids, markers, trigger, record, fps, verbose, save, collect, estimate):
     """
     Ground Plane Estimation\n\n
     - Place 3 non-collinear markers in the calibration wand;\n
     - Put it at the center of the capture volume;\n
     - Make sure they are levelled with each other.\n\n
     The default options are already adjusted for this process.
+    Use either --collect or --estimate:
+    --collect    → Collect raw 2D data from cameras and save
+    --estimate   → Load CSV and compute ground plane (no live capture)
     """
+    if collect and estimate:
+        click.echo("❌ Cannot use --collect and --estimate together.")
+        click.echo("Example: python3 mocaprasp.py gpe --collect")
+        click.echo("         python3 mocaprasp.py gpe --estimate path/to/file.csv")
+        return
+    elif not collect and not estimate:
+        click.echo("❌ You must specify either --collect or --estimate.")
+        click.echo("Example: python3 mocaprasp.py gpe --collect")
+        click.echo("         python3 mocaprasp.py gpe --estimate path/to/file.csv")
+        return
+
     gpeServer = GPE(cameraids, markers, trigger, record, fps, verbose, save)
-    gpeServer.connect()
-    gpeServer.collect()
+
+    if collect:
+        gpeServer.connect()
+        gpeServer.collect()
+
+        ymd, now = datetime.now().strftime("%y-%m-%d"), datetime.now().strftime(
+            "%H-%M-%S"
+        )
+        out_dir = "debug/dataSaves/" + ymd + "/"
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, f"GPE-{now}.pkl")
+        with open(out_path, "wb") as f:
+            pickle.dump(gpeServer, f)
+        click.echo(f"✅ GPE data saved to {out_path}")
+
+    if estimate:
+        if estimate.endswith(".pkl"):
+            with open(estimate, "rb") as f:
+                gpeServer = pickle.load(f)
+            gpeServer.estimate(datapath=None)
+        elif estimate.endswith(".csv"):
+            gpeServer = GPE(cameraids, markers, trigger, record, fps, verbose, save)
+            gpeServer.estimate(datapath=estimate)
+        else:
+            click.echo("❌ Unsupported file type. Use .pkl or .csv")
+        click.echo("✅ Ground plane estimation completed.")
 
 
 @click.command(name="scr")

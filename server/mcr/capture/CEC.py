@@ -102,7 +102,7 @@ class CEC(CaptureProcess):
         detected marker blobs, track certainty, and accumulate all valid 2D points.
         When capture is complete, saves the raw data to CSV.
         """
-        log.info("Starting capture for Camera Extrinsics Calibration")
+        log.info("Starting Camera Extrinsics Calibration (CEC) process...")
         saved_data_rows = []
 
         try:
@@ -247,7 +247,7 @@ class CEC(CaptureProcess):
         )
 
         und_coord = processCentroids(
-            coord, a, b, self.cameraMat[idx], self.distCoef[idx]
+            coord, a, b, self.camera_matrix[idx], self.distortion_coeff[idx]
         )
         if und_coord.shape != (3, 2):
             log.warning(
@@ -526,8 +526,8 @@ class CEC(CaptureProcess):
                     log.info("Translation Matrix\n%s", t.round(4))
 
                 # Triangulate points
-                P1 = np.hstack((self.cameraMat[cam], np.zeros((3, 1))))
-                P2 = self.cameraMat[cam + 1] @ np.hstack((R, t.reshape(3, 1)))
+                P1 = np.hstack((self.camera_matrix[cam], np.zeros((3, 1))))
+                P2 = self.camera_matrix[cam + 1] @ np.hstack((R, t.reshape(3, 1)))
 
                 points3d = self._triangulate_and_filter_outliers(
                     P1, P2, centroids1, centroids2
@@ -548,8 +548,8 @@ class CEC(CaptureProcess):
             filtered_idx, outlier_count = np.arange(len(centroids1)), 0
             F, R, t, lamb, L_vec, points3d, points3d_scaled = (
                 estimate_geometry_and_scale(
-                    self.cameraMat[cam],
-                    self.cameraMat[cam + 1],
+                    self.camera_matrix[cam],
+                    self.camera_matrix[cam + 1],
                     centroids1,
                     centroids2,
                     filtered_idx,
@@ -573,8 +573,8 @@ class CEC(CaptureProcess):
             log.info("Refining fundamental matrix estimation using filtered inliers")
             F, R, t, lamb, L_vec, points3d, points3d_scaled = (
                 estimate_geometry_and_scale(
-                    self.cameraMat[cam],
-                    self.cameraMat[cam + 1],
+                    self.camera_matrix[cam],
+                    self.camera_matrix[cam + 1],
                     centroids1,
                     centroids2,
                     filtered_idx,
@@ -745,12 +745,12 @@ class CEC(CaptureProcess):
                 log.error(f"Invalid fundamental matrix for cameras {cam1} and {cam2}")
                 return np.nan, np.nan, np.nan
 
-            E = self.cameraMat[cam2].T @ F @ self.cameraMat[cam1]
+            E = self.camera_matrix[cam2].T @ F @ self.camera_matrix[cam1]
 
             R, t = decomposeEssentialMat(
                 E,
-                self.cameraMat[cam1],
-                self.cameraMat[cam2],
+                self.camera_matrix[cam1],
+                self.camera_matrix[cam2],
                 centroids1,
                 centroids2,
                 log=log,
@@ -760,8 +760,8 @@ class CEC(CaptureProcess):
             centroids1 = centroids1.astype(np.float32)
             centroids2 = centroids2.astype(np.float32)
 
-            K1 = self.cameraMat[cam1]
-            K2 = self.cameraMat[cam2]
+            K1 = self.camera_matrix[cam1]
+            K2 = self.camera_matrix[cam2]
 
             F, mask = cv2.findFundamentalMat(
                 centroids1, centroids2, cv2.FM_RANSAC, 0.01, 0.99

@@ -31,7 +31,7 @@ pip3 install --editable .
 ``` bash
 source connect.sh
 ```
-- Copy the matrices of the intrinsics calibration done in [`../calib/`](/calib/) to `./mcr/misc/constants.py` to the array `cameraMat` and `distCoef`.
+- Copy the matrices of the intrinsics calibration done in [`../calib/`](/calib/) to `./mcr/misc/constants.py` to the array `camera_matrix` and `distortion_coeff`.
 
 - Make sure mDNS is activated in your network and change the hostname of each Raspberry at the line to 'camX', where X is a number representing the camera ID. Do not use the same ID for different clients.
 

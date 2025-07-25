@@ -4,7 +4,7 @@ import socket, time
 import numpy as np
 from dataclasses import dataclass, field
 
-from mcr.misc.constants import cameraMat, distCoef
+from mcr.misc.constants import camera_matrix, distortion_coeff
 
 warnings.filterwarnings("ignore")
 
@@ -60,8 +60,8 @@ class CaptureProcess(object):
             print("[ERROR] Number of cameras do not match the number of IPs found")
             exit()
 
-        self.cameraMat = np.copy(cameraMat)
-        self.distCoef = np.copy(distCoef)
+        self.camera_matrix = np.copy(camera_matrix)
+        self.distortion_coeff = np.copy(distortion_coeff)
 
         # Do not change below this line, socket variables
         self.nImages = int(self.record / self.step)

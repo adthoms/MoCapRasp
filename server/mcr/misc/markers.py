@@ -7,13 +7,13 @@ from mcr.misc.math import reshapeCoord, getSignal, swapElements, getDistance2Lin
 from mcr.misc.cameras import undistortFisheye, getEpilineCoef
 
 
-def processCentroids(coord, a0, b0, cameraMatrix, distCoef):
+def processCentroids(coord, a0, b0, camera_matrix, distortion_coeff):
     undCoord = np.copy(coord)
 
     for i in range(0, int(coord.shape[0])):
         undCoord[i] = [max(0, undCoord[i][0] + b0 - 5), max(0, undCoord[i][1] + a0 - 5)]
 
-    undCoord = undistortFisheye(undCoord, cameraMatrix, distCoef)
+    undCoord = undistortFisheye(undCoord, camera_matrix, distortion_coeff)
 
     return undCoord
 

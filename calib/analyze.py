@@ -17,6 +17,7 @@ DICT = cv2.aruco.DICT_APRILTAG_36h11
 TOT_MARKERS = SQUARES_HORIZONTALLY * SQUARES_VERTICALLY
 MIN_MARKERS = int(TOT_MARKERS * 0.25)  # Minimum markers to detect for calibration
 
+
 def get_detector():
     aruco_dict = cv2.aruco.getPredefinedDictionary(DICT)
     params = cv2.aruco.DetectorParameters()
@@ -30,6 +31,7 @@ def get_detector():
     params.errorCorrectionRate = 0.8
     return cv2.aruco.ArucoDetector(aruco_dict, params), aruco_dict
 
+
 def get_board(aruco_dict):
     return cv2.aruco.GridBoard(
         size=(SQUARES_HORIZONTALLY, SQUARES_VERTICALLY),
@@ -38,19 +40,22 @@ def get_board(aruco_dict):
         dictionary=aruco_dict,
     )
 
+
 def load_images(cam_num):
     images = glob.glob(f"./raw_pics/cam{cam_num}/*.jpg")
     images.sort()
     return images
 
+
 def save_image(fname, img):
-    cam_num = fname.split('/')[-2].replace('cam', '')
+    cam_num = fname.split("/")[-2].replace("cam", "")
     if not os.path.exists("./detected_pics"):
         os.makedirs("./detected_pics")
     if not os.path.exists(f"./detected_pics/cam{cam_num}"):
         os.makedirs(f"./detected_pics/cam{cam_num}")
     filename = f"./detected_pics/cam{cam_num}/{os.path.basename(fname)}"
     cv2.imwrite(filename, img)
+
 
 def process_image(img_path, detector, display=False, verbose=False):
     img = cv2.imread(img_path)
@@ -74,10 +79,15 @@ def process_image(img_path, detector, display=False, verbose=False):
         return corners, ids, gray.shape[::-1]
     else:
         if verbose:
-            print(f"{img_path} skipped: num of detected markers = {len(ids) if ids is not None else 0}")
+            print(
+                f"{img_path} skipped: num of detected markers = {len(ids) if ids is not None else 0}"
+            )
         return None, None, None
 
-def calibrate_camera(corners_list, ids_list, counter, image_size, board, type="pinhole"):
+
+def calibrate_camera(
+    corners_list, ids_list, counter, image_size, board, type="pinhole"
+):
     if len(corners_list) < 4:
         return None
 
@@ -96,14 +106,16 @@ def calibrate_camera(corners_list, ids_list, counter, image_size, board, type="p
         # Prepare object points
         obj_points = []
         img_points = []
-        
+
         i = 0
         for count in counter:
-            ids = ids_list[i:i+count]
-            corners = corners_list[i:i+count]
+            ids = ids_list[i : i + count]
+            corners = corners_list[i : i + count]
             i += count
 
-            valid_obj_pts, valid_img_pts = cv2.aruco.getBoardObjectAndImagePoints(board, corners, ids)
+            valid_obj_pts, valid_img_pts = cv2.aruco.getBoardObjectAndImagePoints(
+                board, corners, ids
+            )
             if len(valid_obj_pts) > 0:
                 obj_points.append(np.array(valid_obj_pts, dtype=np.float32))
                 img_points.append(np.array(valid_img_pts, dtype=np.float32))
@@ -113,8 +125,7 @@ def calibrate_camera(corners_list, ids_list, counter, image_size, board, type="p
         rvecs = []
         tvecs = []
 
-        flags = cv2.fisheye.CALIB_RECOMPUTE_EXTRINSIC | \
-                cv2.fisheye.CALIB_FIX_SKEW
+        flags = cv2.fisheye.CALIB_RECOMPUTE_EXTRINSIC | cv2.fisheye.CALIB_FIX_SKEW
 
         rms, mtx, dist, rvecs, tvecs = cv2.fisheye.calibrate(
             obj_points,
@@ -125,26 +136,27 @@ def calibrate_camera(corners_list, ids_list, counter, image_size, board, type="p
             rvecs,
             tvecs,
             flags,
-            (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 200, 1e-6)
+            (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 200, 1e-6),
         )
     else:
         raise ValueError("Unsupported camera model type. Use 'pinhole' or 'fisheye'.")
 
     return ret, mtx, dist, rvecs, tvecs
 
+
 def plot_corner_heatmap(corners_list, image_size, output_path="corner_heatmap.png"):
     heat = np.zeros((image_size[1], image_size[0]), dtype=np.float32)
 
     for marker_corners in corners_list:
         for marker in marker_corners:
-            for (x, y) in marker:
+            for x, y in marker:
                 xi, yi = int(round(x)), int(round(y))
                 if 0 <= xi < heat.shape[1] and 0 <= yi < heat.shape[0]:
                     heat[yi, xi] += 1
 
     plt.figure(figsize=(8, 6))
     plt.title("Detected Marker Corner Heatmap")
-    plt.imshow(heat, cmap='hot', interpolation='nearest')
+    plt.imshow(heat, cmap="hot", interpolation="nearest")
     plt.colorbar(label="Corner Hits")
     plt.xlabel("X (pixels)")
     plt.ylabel("Y (pixels)")
@@ -152,10 +164,12 @@ def plot_corner_heatmap(corners_list, image_size, output_path="corner_heatmap.pn
     plt.savefig(output_path, dpi=300)
     plt.close()
 
+
 def save_results(cam_num, mtx, dist, rvecs, tvecs):
     filename = f"./results/cam{cam_num}_calib.npz"
     np.savez(filename, mtx=mtx, dist=dist, rvecs=rvecs, tvecs=tvecs)
     print(f"Calibration results saved to {filename}")
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -177,7 +191,9 @@ def main():
         image_size = None
 
         for fname in images:
-            corners, ids, size = process_image(fname, detector, display=args.display, verbose=args.verbose)
+            corners, ids, size = process_image(
+                fname, detector, display=args.display, verbose=args.verbose
+            )
             if corners is not None:
                 all_corners.extend(corners)
                 all_ids.extend(ids.flatten())
@@ -188,12 +204,16 @@ def main():
         cv2.destroyAllWindows()
 
         if args.heatmap and image_size and all_corners:
-            plot_corner_heatmap(all_corners, image_size, f"./heatmaps/cam{cam_num}_heatmap.png")
+            plot_corner_heatmap(
+                all_corners, image_size, f"./heatmaps/cam{cam_num}_heatmap.png"
+            )
         if len(all_corners) < 4:
             print(f"Not enough data to calibrate camera {cam_num}. Skipping.")
             continue
 
-        result = calibrate_camera(all_corners, np.array(all_ids), np.array(counter), image_size, board)
+        result = calibrate_camera(
+            all_corners, np.array(all_ids), np.array(counter), image_size, board
+        )
 
         if result is None:
             print(f"Calibration failed for camera {cam_num}.")
@@ -210,6 +230,7 @@ def main():
 
         if args.save:
             save_results(cam_num, mtx, dist, rvecs, tvecs)
+
 
 if __name__ == "__main__":
     main()

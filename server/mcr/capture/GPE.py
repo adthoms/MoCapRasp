@@ -1,38 +1,80 @@
-import warnings
-
-warnings.filterwarnings("ignore")
 import os
-from datetime import datetime
+import logging
+import warnings
 import numpy as np
+from datetime import datetime
 from cv2 import destroyAllWindows, triangulatePoints
 
-from mcr.capture.CaptureProcess import CaptureProcess
-
 from mcr.misc.math import findPlane
+from mcr.misc.plot import ArenaViewer, Frame
 from mcr.misc.cameras import projectionPoints
 from mcr.misc.markers import processCentroids, getOrderPerEpiline
-from mcr.misc.plot import ArenaViewer, Frame
+from mcr.capture.CaptureProcess import CaptureProcess
+
+warnings.filterwarnings("ignore")
+logging.basicConfig(level=logging.DEBUG, format="[%(levelname)s] %(message)s")
+log = logging.getLogger(__name__)
+
+# class CaptureProcess(object):
+#     def __init__(
+#         self, cameraids, markers, trigger, record, fps, verbose, save, *args, **kwargs
+#     ):
+
+# gpeServer = GPE(cameraids, markers, trigger, record, fps, verbose, save)
 
 
 class GPE(CaptureProcess):
+    """
+    Ground Plane Estimation (GPE) module.
+
+    This class inherits from CaptureProcess and is responsible for:
+    - Capturing 2D marker data from multiple cameras via UDP.
+    - Undistorting and storing the first valid observation from each camera.
+    - Reordering markers based on epipolar geometry using the fundamental matrix.
+    - Triangulating 3D points from the 2D correspondences.
+    - Fitting a plane to the triangulated points and aligning it to a canonical ground frame.
+    - Saving aligned 3D data and camera height relative to the estimated ground plane.
+    """
+
+    def __init__(
+        self, cameraids, markers, trigger, record, fps, verbose, save, *args, **kwargs
+    ):
+        """
+        Initializes the GPE instance.
+
+        Args:
+            cameraids (list): List of camera IDs.
+            markers (list): List of marker IDs.
+            trigger (bool): Whether to trigger the capture.
+            record (bool): Whether to record the capture.
+            fps (int): Frames per second for the capture.
+            verbose (bool): Whether to enable verbose logging.
+            save (bool): Whether to save the captured data.
+            *args: Additional positional arguments.
+            **kwargs: Additional keyword arguments.
+        """
+        super().__init__(
+            cameraids, markers, trigger, record, fps, verbose, save, *args, **kwargs
+        )
+
     # Collect points from clients, order and trigger interpolation
     def collect(self):
-        print("[INFO] waiting capture")
+        log.info("Starting Ground Plane Estimation (GPE) process...")
 
         # Internal variables
         capture, counter = np.ones(self.cameras, dtype=bool), np.zeros(
             self.cameras, dtype=np.int8
         )
-        dfSave, dfOrig = [], []
+        saved_data_rows, time_intervals = [], []
 
         for _ in range(self.cameras):  # For each camera
-            dfOrig.append([])  # List for each camera
+            time_intervals.append([])  # List for each camera
 
         # Capture loop
         try:
             while np.any(capture):
                 # Receive message
-                bytesPair = self.server_socket.recvfrom(self.bufferSize)
+                bytesPair = self.server_socket.recvfrom(self.buffer_size)
                 message = np.frombuffer(bytesPair[0], dtype=np.float64)
                 address, sizeMsg = bytesPair[1], len(message)
                 idx = self.ipList.index(address[0])
@@ -55,11 +97,11 @@ class GPE(CaptureProcess):
 
                     # Undistort points
                     undCoord = processCentroids(
-                        coord, a, b, self.cameraMat[idx], self.distCoef[idx]
+                        coord, a, b, self.camera_matrix[idx], self.distortion_coeff[idx]
                     )
                     if undCoord.shape[0] == 3:
                         if self.save:
-                            dfSave.append(
+                            saved_data_rows.append(
                                 np.concatenate(
                                     (
                                         undCoord.reshape(
@@ -70,7 +112,9 @@ class GPE(CaptureProcess):
                                 )
                             )
                         if not counter[idx]:
-                            dfOrig[idx] = np.hstack((undCoord.reshape(6), timeNow))
+                            time_intervals[idx] = np.hstack(
+                                (undCoord.reshape(6), timeNow)
+                            )
                         counter[idx] += 1
 
                     # Do I have enough points?
@@ -93,7 +137,9 @@ class GPE(CaptureProcess):
                     print(f"Folder {path} created!")
 
                 np.savetxt(
-                    path + "GPE-" + HMS + ".csv", np.array(dfSave), delimiter=","
+                    path + "GPE-" + HMS + ".csv",
+                    np.array(saved_data_rows),
+                    delimiter=",",
                 )
 
             # Import R,t and lambda
@@ -121,23 +167,23 @@ class GPE(CaptureProcess):
                 )
 
                 # Order centroids per epipolar line
-                pts1, pts2 = dfOrig[j][0:6].reshape(-1, 2), dfOrig[j + 1][0:6].reshape(
-                    -1, 2
-                )
+                pts1, pts2 = time_intervals[j][0:6].reshape(-1, 2), time_intervals[
+                    j + 1
+                ][0:6].reshape(-1, 2)
                 orderSecondFrame = getOrderPerEpiline(pts1, pts2, 3, np.copy(F))
                 pts2 = np.copy(pts2[orderSecondFrame])
 
                 # Save dataset
-                dfOrig[j + 1][0:6] = pts2.copy().ravel()
+                time_intervals[j + 1][0:6] = pts2.copy().ravel()
 
             # Triangulate ordered centroids from the first pair
-            pts1, pts2 = np.copy(dfOrig[0][0:6].reshape(-1, 2)), np.copy(
-                dfOrig[1][0:6].reshape(-1, 2)
+            pts1, pts2 = np.copy(time_intervals[0][0:6].reshape(-1, 2)), np.copy(
+                time_intervals[1][0:6].reshape(-1, 2)
             )
             R, t, lamb = rotation[1], translation[1].reshape(-1, 3), scale[1]
-            P1, P2 = np.hstack((self.cameraMat[0], [[0.0], [0.0], [0.0]])), np.matmul(
-                self.cameraMat[1], np.hstack((R, t.T))
-            )
+            P1, P2 = np.hstack(
+                (self.camera_matrix[0], [[0.0], [0.0], [0.0]])
+            ), np.matmul(self.camera_matrix[1], np.hstack((R, t.T)))
             projPt1, projPt2 = projectionPoints(np.array(pts1)), projectionPoints(
                 np.array(pts2)
             )

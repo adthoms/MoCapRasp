@@ -10,8 +10,7 @@ _cx = [483.41, 471.80, 486.83]
 _cy = [330.11, 299.70, 311.30]
 
 _intrinsics = [
-    [[fx, 0, cx], [0, fy, cy], [0, 0, 1]]
-    for fx, fy, cx, cy in zip(_fx, _fy, _cx, _cy)
+    [[fx, 0, cx], [0, fy, cy], [0, 0, 1]] for fx, fy, cx, cy in zip(_fx, _fy, _cx, _cy)
 ]
 
 _distortions = [
@@ -20,12 +19,12 @@ _distortions = [
     [0.1670, -0.2836, -0.0028, 0.0007],
 ]
 
-# Construct cameraMat and distCoef
-cameraMat = [np.array(K, dtype=np.float64) for K in _intrinsics]
-distCoef = [np.array(D, dtype=np.float32).reshape(-1, 1) for D in _distortions]
+# Construct camera_matrix and distortion_coeff
+camera_matrix = [np.array(K, dtype=np.float64) for K in _intrinsics]
+distortion_coeff = [np.array(D, dtype=np.float32).reshape(-1, 1) for D in _distortions]
 
 if __name__ == "__main__":
-    for i, (K, D) in enumerate(zip(cameraMat, distCoef)):
+    for i, (K, D) in enumerate(zip(camera_matrix, distortion_coeff)):
         print(f"Camera {i}:")
         print("  Intrinsic Matrix:\n", K)
         print("  Distortion Coefficients:\n", D)

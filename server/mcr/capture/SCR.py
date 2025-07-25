@@ -1,16 +1,14 @@
-# IMPORTS >>> DO NOT CHANGE <<<
+import os
+import math
+import logging
 import warnings
-
-warnings.filterwarnings("ignore")
-import os, math
-from datetime import datetime
 import numpy as np
+from datetime import datetime
 from scipy.interpolate import CubicSpline
 from cv2 import destroyAllWindows, triangulatePoints
 
-from mcr.capture.CaptureProcess import CaptureProcess
-
 from mcr.misc.math import interpolate
+from mcr.misc.plot import ArenaViewer, Frame
 from mcr.misc.cameras import projectionPoints, getOtherValidIdx
 from mcr.misc.markers import (
     occlusion,
@@ -22,13 +20,17 @@ from mcr.misc.markers import (
     getOrderPerEpiline,
     popNeedsOrder,
 )
-from mcr.misc.plot import ArenaViewer, Frame
+from mcr.capture.CaptureProcess import CaptureProcess
+
+warnings.filterwarnings("ignore")
+logging.basicConfig(level=logging.DEBUG, format="[%(levelname)s] %(message)s")
+log = logging.getLogger(__name__)
 
 
 class SCR(CaptureProcess):
     # Collect points from clients, order and trigger interpolation
     def collect(self):
-        print("[INFO] waiting capture")
+        log.info("Starting Standard Capture Routine (SCR) process...")
 
         # Internal variables
         capture = np.ones(self.cameras, dtype=np.bool)
@@ -155,7 +157,11 @@ class SCR(CaptureProcess):
 
                         # Undistort points
                         undCoord = processCentroids(
-                            coord, a, b, self.cameraMat[idx], self.distCoef[idx]
+                            coord,
+                            a,
+                            b,
+                            self.camera_matrix[idx],
+                            self.distortion_coeff[idx],
                         )
                         if self.save:
                             dfSave.append(
@@ -485,9 +491,9 @@ class SCR(CaptureProcess):
                                     scale[maxIdx],
                                 )
                                 P1, P2 = np.hstack(
-                                    (self.cameraMat[minIdx], [[0.0], [0.0], [0.0]])
+                                    (self.camera_matrix[minIdx], [[0.0], [0.0], [0.0]])
                                 ), np.matmul(
-                                    self.cameraMat[maxIdx], np.hstack((R, t.T))
+                                    self.camera_matrix[maxIdx], np.hstack((R, t.T))
                                 )
                                 projPt1, projPt2 = projectionPoints(
                                     np.array(pts1)
