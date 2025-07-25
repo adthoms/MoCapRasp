@@ -2,6 +2,7 @@ import os
 import logging
 import warnings
 import numpy as np
+import pandas as pd
 from datetime import datetime
 from cv2 import destroyAllWindows, triangulatePoints
 
@@ -9,18 +10,11 @@ from mcr.misc.math import findPlane
 from mcr.misc.plot import ArenaViewer, Frame
 from mcr.misc.cameras import projectionPoints
 from mcr.misc.markers import processCentroids, getOrderPerEpiline
-from mcr.capture.CaptureProcess import CaptureProcess
+from mcr.capture.CaptureProcess import CaptureProcess, CalibrationResult
 
 warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.DEBUG, format="[%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
-
-# class CaptureProcess(object):
-#     def __init__(
-#         self, cameraids, markers, trigger, record, fps, verbose, save, *args, **kwargs
-#     ):
-
-# gpeServer = GPE(cameraids, markers, trigger, record, fps, verbose, save)
 
 
 class GPE(CaptureProcess):
@@ -56,7 +50,8 @@ class GPE(CaptureProcess):
         super().__init__(
             cameraids, markers, trigger, record, fps, verbose, save, *args, **kwargs
         )
-        self.saved_data_rows, self.time_intervals = [], []
+        self.saved_data_rows, self.dfOrig = [], []
+        self.calibration_result = CalibrationResult()
 
     # Collect points from clients, order and trigger interpolation
     def collect(self):
@@ -66,9 +61,9 @@ class GPE(CaptureProcess):
         capture, counter = np.ones(self.cameras, dtype=bool), np.zeros(
             self.cameras, dtype=np.int8
         )
-        
+
         for _ in range(self.cameras):  # For each camera
-            self.time_intervals.append([])  # List for each camera
+            self.dfOrig.append([])  # List for each camera
 
         # Capture loop
         try:
@@ -112,9 +107,7 @@ class GPE(CaptureProcess):
                                 )
                             )
                         if not counter[idx]:
-                            self.time_intervals[idx] = np.hstack(
-                                (undCoord.reshape(6), timeNow)
-                            )
+                            self.dfOrig[idx] = np.hstack((undCoord.reshape(6), timeNow))
                         counter[idx] += 1
 
                     # Do I have enough points?
@@ -141,8 +134,10 @@ class GPE(CaptureProcess):
                     np.array(self.saved_data_rows),
                     delimiter=",",
                 )
-            log.info("Saved raw data for GPE process. Estimation not performed in --collect mode.")
-        
+            log.info(
+                "Saved raw data for GPE process. Estimation not performed in --collect mode."
+            )
+
     # Estimate ground plane
     def estimate(self, datapath: str) -> None:
         """
@@ -169,12 +164,12 @@ class GPE(CaptureProcess):
         rotation = np.genfromtxt("mcr/capture/data/R.csv", delimiter=",").reshape(
             -1, 3, 3
         )
-        translation = np.genfromtxt(
-            "mcr/capture/data/t.csv", delimiter=","
-        ).reshape(-1, 1, 3)
-        projMat = np.genfromtxt(
-            "mcr/capture/data/projMat.csv", delimiter=","
-        ).reshape(-1, 4, 4)
+        translation = np.genfromtxt("mcr/capture/data/t.csv", delimiter=",").reshape(
+            -1, 1, 3
+        )
+        projMat = np.genfromtxt("mcr/capture/data/projMat.csv", delimiter=",").reshape(
+            -1, 4, 4
+        )
         scale, FMatrix = np.genfromtxt(
             "mcr/capture/data/lamb.csv", delimiter=","
         ), np.genfromtxt("mcr/capture/data/F.csv", delimiter=",").reshape(-1, 3, 3)
@@ -190,23 +185,23 @@ class GPE(CaptureProcess):
             )
 
             # Order centroids per epipolar line
-            pts1, pts2 = self.time_intervals[j][0:6].reshape(-1, 2), self.time_intervals[
-                j + 1
-            ][0:6].reshape(-1, 2)
+            pts1, pts2 = self.dfOrig[j][0:6].reshape(-1, 2), self.dfOrig[j + 1][
+                0:6
+            ].reshape(-1, 2)
             orderSecondFrame = getOrderPerEpiline(pts1, pts2, 3, np.copy(F))
             pts2 = np.copy(pts2[orderSecondFrame])
 
             # Save dataset
-            self.time_intervals[j + 1][0:6] = pts2.copy().ravel()
+            self.dfOrig[j + 1][0:6] = pts2.copy().ravel()
 
         # Triangulate ordered centroids from the first pair
-        pts1, pts2 = np.copy(self.time_intervals[0][0:6].reshape(-1, 2)), np.copy(
-            self.time_intervals[1][0:6].reshape(-1, 2)
+        pts1, pts2 = np.copy(self.dfOrig[0][0:6].reshape(-1, 2)), np.copy(
+            self.dfOrig[1][0:6].reshape(-1, 2)
         )
         R, t, lamb = rotation[1], translation[1].reshape(-1, 3), scale[1]
-        P1, P2 = np.hstack(
-            (self.camera_matrix[0], [[0.0], [0.0], [0.0]])
-        ), np.matmul(self.camera_matrix[1], np.hstack((R, t.T)))
+        P1, P2 = np.hstack((self.camera_matrix[0], [[0.0], [0.0], [0.0]])), np.matmul(
+            self.camera_matrix[1], np.hstack((R, t.T))
+        )
         projPt1, projPt2 = projectionPoints(np.array(pts1)), projectionPoints(
             np.array(pts2)
         )
@@ -301,3 +296,15 @@ class GPE(CaptureProcess):
         np.savetxt(
             "mcr/capture/data/groundData.csv", np.array([d, b, h]), delimiter=","
         )
+
+    def _load_calibration_files(self):
+        pass
+
+    def _order_epipolar_points(self):
+        pass
+
+    def _triangulate_3d_points(self):
+        pass
+
+    def _align_to_ground_plane(self):
+        pass

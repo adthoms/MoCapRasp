@@ -6,11 +6,10 @@ import warnings
 import numpy as np
 import pandas as pd
 from datetime import datetime
-from dataclasses import dataclass, field
 from scipy.interpolate import CubicSpline
 from itertools import combinations, permutations
 
-from mcr.capture.CaptureProcess import CaptureProcess, CameraState
+from mcr.capture.CaptureProcess import CaptureProcess, CameraState, Calibration
 from mcr.misc.math import isCollinear
 from mcr.misc.cameras import (
     estimateFundMatrix_8norm,
@@ -24,37 +23,6 @@ from mcr.misc.plot import ArenaViewer, Frame
 warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.DEBUG, format="[%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
-
-
-@dataclass
-class CalibrationResult:
-    """
-    Holds the full output of the multi-camera calibration process.
-    Includes rotation, translation, scaling factors, triangulated points,
-    and projection matrices.
-    """
-
-    rotations: list = field(
-        default_factory=lambda: [np.identity(3)]
-    )  # List of relative rotation matrices between camera pairs
-    translations: list = field(
-        default_factory=lambda: [[[0.0, 0.0, 0.0]]]
-    )  # List of relative translations
-    scales: list = field(
-        default_factory=lambda: [[1]]
-    )  # List of scale factors for 3D point normalization
-    fundamental_matrices: list = field(
-        default_factory=list
-    )  # Fundamental matrices (2D epipolar geometry)
-    triangulated_points: list = field(
-        default_factory=list
-    )  # 3D points after triangulation and scale application
-    projection_matrices: list = field(
-        default_factory=list
-    )  # Reserved for projection matrices (optional use)
-    all_points_3d: np.ndarray = field(
-        default_factory=lambda: np.zeros((4, 0))
-    )  # Homogeneous 3D coordinates (shape: 4×N) of all triangulated points,
 
 
 class CEC(CaptureProcess):
