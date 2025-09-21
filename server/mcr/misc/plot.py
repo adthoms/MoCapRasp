@@ -11,14 +11,19 @@ logging.getLogger("matplotlib.font_manager").setLevel(logging.WARNING)
 
 
 class Frame:
-    def __init__(self, R=np.eye(3), t=np.zeros((3, 1))):
+    def __init__(self, R: np.ndarray = np.eye(3), t: np.ndarray = np.zeros((3, 1))):
         self.R = R
         self.t = t
 
 
 class ArenaViewer:
     def __init__(
-        self, title, arenaSize=0, plotSize=(900, 700), reference=True, graphical=False
+        self,
+        title: str,
+        arenaSize: float = 0,
+        plotSize: tuple = (900, 700),
+        reference: bool = True,
+        graphical: bool = False,
     ):
         self.title = title
         self.graphical = graphical  # Toggle to activate graphical mode
@@ -96,7 +101,7 @@ class ArenaViewer:
         )
         self.all_points.append(np.array([[0], [0], [0]]))  # Add origin to all_points
 
-    def add_boundary(self, points, name, color=None):
+    def add_boundary(self, points: np.ndarray, name: str, color: str = None):
         points = np.hstack(
             [points, points[:, [0]]]
         )  # Repeat first column in the last column
@@ -118,7 +123,7 @@ class ArenaViewer:
         )
         self.all_points.append(np.array(points))
 
-    def add_plane(self, vertices, name, color=None):
+    def add_plane(self, vertices: np.ndarray, name: str, color: str = None):
         self.figure.add_trace(
             go.Mesh3d(
                 x=vertices[0],
@@ -137,7 +142,7 @@ class ArenaViewer:
         self.all_points.append(np.array(vertices))
 
     # Arena elements methods
-    def add_frame(self, frame, name, axis_size=1, color=None):
+    def add_frame(self, frame: Frame, name: str, axis_size: int = 1, color: str = None):
 
         # Set default colors
         axis_name_list = ["x", "y", "z"]
@@ -176,7 +181,7 @@ class ArenaViewer:
                 )
             )
 
-    def add_path(self, points, name, color=None):
+    def add_path(self, points: np.ndarray, name: str, color: str = None):
         self.figure.add_trace(
             go.Scatter3d(
                 x=points[0],
@@ -192,7 +197,7 @@ class ArenaViewer:
         )
         self.all_points.append(np.array(points))  # Add points to all_points
 
-    def add_markers(self, points, name, color=None):
+    def add_markers(self, points: np.ndarray, name: str, color: str = None):
         if isinstance(points, list):
             points = np.array(points)
 
@@ -213,7 +218,13 @@ class ArenaViewer:
         )
         self.all_points.append(np.array(points))
 
-    def _compute_marker_sizes(self, points, radius=0.05, base_size=3, scale=2.0):
+    def _compute_marker_sizes(
+        self,
+        points: np.ndarray,
+        radius: float = 0.05,
+        base_size: int = 3,
+        scale: float = 2.0,
+    ):
         dists = pairwise_distances(points)  # Compute pairwise distances
         neighbor_counts = (dists < radius).sum(
             axis=0

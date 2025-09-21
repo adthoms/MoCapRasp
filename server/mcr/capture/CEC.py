@@ -9,7 +9,7 @@ from datetime import datetime
 from scipy.interpolate import CubicSpline
 from itertools import combinations, permutations
 
-from mcr.capture.CaptureProcess import CaptureProcess, CameraState, Calibration
+from mcr.capture.CaptureProcess import CaptureProcess, CameraState, CalibrationResult
 from mcr.misc.math import isCollinear
 from mcr.misc.cameras import (
     estimateFundMatrix_8norm,
@@ -101,33 +101,34 @@ class CEC(CaptureProcess):
             datapath (str): Path to the saved CSV file
         """
         log.info(f"Loading 2D marker data from {datapath}")
-        if not datapath:
+        if not datapath and not self.camera_states[0].undistorted_frames:
             log.error("No data path provided. Cannot load calibration data.")
             return
-        if not os.path.exists(datapath):
+        if datapath and not os.path.exists(datapath):
             log.error(f"File not found: {datapath}")
             return
-        try:
-            data = pd.read_csv(datapath, header=None).values
-            for row in data:
-                cam_idx = int(row[-1])
-                if cam_idx >= self.cameras:
-                    log.warning(f"Skipping row with invalid camera index {cam_idx}")
-                    continue
-                existing = self.camera_states[cam_idx].undistorted_frames
-                if (
-                    existing is None
-                    or np.array(existing).size == 0
-                    or existing.ndim != 2
-                ):
-                    self.camera_states[cam_idx].undistorted_frames = np.array([row])
-                else:
-                    self.camera_states[cam_idx].undistorted_frames = np.vstack(
-                        [existing, row]
-                    )
-        except Exception as e:
-            log.error(f"Failed to load calibration data from file: {e}")
-            return
+        if not self.camera_states[0].undistorted_frames:
+            try:
+                data = pd.read_csv(datapath, header=None).values
+                for row in data:
+                    cam_idx = int(row[-1])
+                    if cam_idx >= self.cameras:
+                        log.warning(f"Skipping row with invalid camera index {cam_idx}")
+                        continue
+                    existing = self.camera_states[cam_idx].undistorted_frames
+                    if (
+                        existing is None
+                        or np.array(existing).size == 0
+                        or existing.ndim != 2
+                    ):
+                        self.camera_states[cam_idx].undistorted_frames = np.array([row])
+                    else:
+                        self.camera_states[cam_idx].undistorted_frames = np.vstack(
+                            [existing, row]
+                        )
+            except Exception as e:
+                log.error(f"Failed to load calibration data from file: {e}")
+                return
 
         log.info("Data successfully loaded. Starting calibration process...")
         self._finalize_capture_session(saved_data_rows=None)

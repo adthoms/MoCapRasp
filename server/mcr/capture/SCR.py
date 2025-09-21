@@ -28,8 +28,40 @@ log = logging.getLogger(__name__)
 
 
 class SCR(CaptureProcess):
-    # Collect points from clients, order and trigger interpolation
+    """
+    Standard Capture Routine (SCR) for multi-camera 3D reconstruction.
+
+    Inherits from CaptureProcess and implements the full pipeline of:
+    - Receiving 2D marker coordinates via UDP from multiple cameras.
+    - Undistorting and ordering detected markers using proximity and epipolar constraints.
+    - Detecting and handling occlusion and invalid frames.
+    - Interpolating trajectories using cubic splines.
+    - Dynamically reordering points across views to maintain temporal and spatial consistency.
+    - Triangulating 3D points and aligning them to the estimated ground plane.
+    - Saving raw and processed data for later analysis or visualization.
+    """
     def collect(self):
+        """
+        Executes the main loop for multi-camera data capture and processing.
+
+        Functionality includes:
+        - Receives blob data from UDP clients.
+        - Undistorts incoming 2D marker positions.
+        - Tracks sequence continuity and filters out invalid/misaligned frames.
+        - Detects occlusion and reorders markers using proximity and epipolar constraints.
+        - Performs interpolation of valid marker trajectories over time.
+        - Triangulates 3D coordinates from interpolated 2D data.
+        - Projects 3D points into world space and aligns them to the ground plane.
+        - Optionally saves raw and processed results to CSV files.
+
+        Saves:
+        - Raw undistorted marker data: debug/dataSaves/<date>/SCR-<time>.csv
+        - 3D world-aligned marker positions: in memory for optional plotting.
+
+        Notes:
+        - Requires prior calibration: R.csv, t.csv, projMat.csv, lamb.csv, F.csv, P_plane.csv, groundData.csv.
+        - Interpolation depends on consistent timestamps and minimal occlusion.
+        """
         log.info("Starting Standard Capture Routine (SCR) process...")
 
         # Internal variables

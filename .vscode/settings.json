@@ -8,5 +8,9 @@
     "."
   ],
   "python.testing.unittestEnabled": false,
-  "python.testing.pytestEnabled": true
+  "python.testing.pytestEnabled": true,
+  "python.analysis.extraPaths": [
+    "/opt/ros/noetic/lib/python3/dist-packages",
+    "/home/nuc/catkin_ws/devel/lib/python3/dist-packages"
+  ]
 }
